@@ -375,7 +375,170 @@ def demo_mode3(access_key: str, secret_key: str) -> None:
 # ---------------------------------------------------------------------------
 
 
+def demo_join_aggregation() -> None:
+    """Local reproduction of cross_backend_notebook Step 7.
+
+    Uses in-memory DataSources that mirror VastDBDataSource's pushdown
+    behaviour: column projection is intentionally skipped because Daft's
+    optimizer (0.7.x) may push down an incomplete column set that omits
+    columns required by downstream joins, causing HashJoin schema
+    assertion failures.
+
+    No VastDB connection required — runs purely in-process.
+    """
+    from collections.abc import Iterator
+
+    from daft.io import DataSource, DataSourceTask
+    from daft.recordbatch import MicroPartition
+    from daft.schema import Schema
+
+    class _InMemoryTask(DataSourceTask):
+        def __init__(self, table: pa.Table) -> None:
+            self._table = table
+
+        @property
+        def schema(self) -> Schema:
+            return Schema.from_pyarrow_schema(self._table.schema)
+
+        def get_micro_partitions(self) -> Iterator[MicroPartition]:
+            yield MicroPartition.from_arrow(self._table)
+
+    class _InMemorySource(DataSource):
+        """DataSource backed by a PyArrow table — no column projection."""
+
+        def __init__(self, table: pa.Table) -> None:
+            self._table = table
+
+        @property
+        def name(self) -> str:
+            return "InMemory"
+
+        @property
+        def schema(self) -> Schema:
+            return Schema.from_pyarrow_schema(self._table.schema)
+
+        def get_tasks(self, pushdowns: object) -> Iterator[_InMemoryTask]:
+            # Column projection intentionally skipped — see docstring.
+            yield _InMemoryTask(self._table)
+
+    print("\n=== Join + Aggregation Test (mirrors cross_backend_notebook Step 7) ===")
+
+    import random
+
+    random.seed(42)
+    n_orders = 1_000
+    n_customers = 100
+    products = ["Widget A", "Widget B", "Gadget X", "Gadget Y", "Thingamajig"]
+    categories = {
+        "Widget A": "Widgets",
+        "Widget B": "Widgets",
+        "Gadget X": "Gadgets",
+        "Gadget Y": "Gadgets",
+        "Thingamajig": "Misc",
+    }
+    cost_prices = {"Widget A": 15.0, "Widget B": 20.0, "Gadget X": 45.0, "Gadget Y": 55.0, "Thingamajig": 8.0}
+
+    # --- Orders table (like VastDB) ---
+    order_products = [random.choice(products) for _ in range(n_orders)]
+    orders_table = pa.table(
+        {
+            "order_id": list(range(1001, 1001 + n_orders)),
+            "customer_id": [random.randint(1, n_customers) for _ in range(n_orders)],
+            "product": order_products,
+            "amount": [round(random.uniform(5.0, 500.0), 2) for _ in range(n_orders)],
+            "order_date": [f"2025-{random.randint(1, 12):02d}-{random.randint(1, 28):02d}" for _ in range(n_orders)],
+        }
+    )
+
+    # --- Customers table (like VastDB) ---
+    tiers = ["bronze", "silver", "gold", "platinum"]
+    customers_table = pa.table(
+        {
+            "customer_id": list(range(1, n_customers + 1)),
+            "name": [f"customer_{i}" for i in range(1, n_customers + 1)],
+            "tier": [random.choice(tiers) for _ in range(n_customers)],
+        }
+    )
+
+    # --- Products table (like Iceberg) ---
+    products_table = pa.table(
+        {
+            "product": list(categories.keys()),
+            "category": list(categories.values()),
+            "cost_price": [cost_prices[p] for p in categories],
+        }
+    )
+
+    # Build lazy DataFrames from the in-memory sources
+    df_orders = _InMemorySource(orders_table).read()
+    df_customers = _InMemorySource(customers_table).read()
+    df_products = _InMemorySource(products_table).read()
+
+    # Step 5: orders x products join on "product"
+    df_enriched = df_orders.join(df_products, on="product", how="inner").select(
+        "order_id", "customer_id", "product", "category", "amount", "cost_price", "order_date"
+    )
+
+    # Step 6: enriched x customers join on "customer_id"
+    df_full = df_enriched.join(df_customers, on="customer_id", how="inner").select(
+        "order_id",
+        "customer_id",
+        "product",
+        "category",
+        "amount",
+        "cost_price",
+        "order_date",
+        "name",
+        "tier",
+    )
+
+    # Step 7: margin aggregation — this is the operation that triggered the
+    # original schema assertion failure in HashJoin.
+    df_margin = (
+        df_full.with_column("margin", col("amount") - col("cost_price"))
+        .groupby("category")
+        .agg(
+            col("margin").sum().alias("total_margin"),
+            col("margin").mean().alias("avg_margin"),
+            col("order_id").count().alias("order_count"),
+        )
+        .sort("total_margin", desc=True)
+    )
+
+    print("  Margin by category:")
+    df_margin.show()
+
+    collected = df_margin.collect()
+    n = collected.count_rows()
+    assert n > 0, f"Expected rows from aggregation, got {n}"
+    print(f"  -> {n} category rows [OK]")
+
+    # Also test the tier x category aggregation
+    df_tier_cat = (
+        df_full.with_column("margin", col("amount") - col("cost_price"))
+        .groupby("tier", "category")
+        .agg(
+            col("margin").sum().alias("total_margin"),
+            col("order_id").count().alias("order_count"),
+        )
+        .sort("total_margin", desc=True)
+        .limit(10)
+    )
+    print("\n  Margin by tier x category (top 10):")
+    df_tier_cat.show()
+
+    collected2 = df_tier_cat.collect()
+    n2 = collected2.count_rows()
+    assert n2 > 0, f"Expected rows from tier x category aggregation, got {n2}"
+    print(f"  -> {n2} rows [OK]")
+
+    print("\n=== Join + Aggregation Test PASSED ===\n")
+
+
 def main() -> None:
+    # Run the local join test first — no VastDB needed.
+    demo_join_aggregation()
+
     access_key, secret_key = load_credentials()
 
     # ------------------------------------------------------------------
