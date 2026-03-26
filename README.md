@@ -165,6 +165,51 @@ config = VastDBConfig.from_env()
 | `VASTDB_SSL_VERIFY` | No | `true`/`false` (default `true`) |
 | `VASTDB_ADBC_DRIVER_PATH` | No | Path to `libadbc_driver_vastdb.so` |
 
+## Deployment (Kubernetes + Ray + Marimo)
+
+Deploy a Ray cluster and Marimo notebook server on Kubernetes with a single command:
+
+```bash
+make deploy
+```
+
+This builds a Docker image with `vast_daft` + dependencies, pushes it to the Zarf in-cluster registry, and deploys:
+- **Ray cluster** (1 head + 2 workers) via KubeRay operator
+- **Marimo notebook** server for interactive development
+- **Ingress** for browser access (nginx)
+
+| Service | URL |
+|---------|-----|
+| Marimo notebook | `http://marimo.ray-system.v141.lc` |
+| Ray dashboard | `http://ray-dashboard.ray-system.v141.lc` |
+
+### Using Ray from Marimo
+
+```python
+import os, daft
+from vast_daft import VastDBCatalog, VastDBConfig
+
+daft.set_runner_ray(os.environ["RAY_ADDRESS"])
+
+config = VastDBConfig(...)
+catalog = VastDBCatalog(config)
+df = catalog.read_table("my_table")
+df.show()
+```
+
+### Other Make targets
+
+```bash
+make build      # Build Docker image only
+make push       # Build + push to Zarf registry
+make status     # Show pods, services, ingress
+make logs       # Tail marimo logs
+make undeploy   # Remove Helm release (keeps operator)
+make clean      # Remove everything including namespace
+```
+
+See [RAY_DEPLOYMENT.md](RAY_DEPLOYMENT.md) for detailed architecture and troubleshooting.
+
 ## Development
 
 ```bash
