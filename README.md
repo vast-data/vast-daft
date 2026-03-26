@@ -8,7 +8,8 @@ Daft custom connector (`DataSource` / `DataSink`) for [VastDB](https://vastdata.
 - **`VastDBDataSink`** — Write Daft DataFrames to VastDB tables.
 - **`SQLDataSource`** — Execute arbitrary SQL against VastDB via the ADBC driver and get a Daft DataFrame back.
 - **`VectorSearchDataSource`** — Two-stage vector similarity search (ADBC `array_distance` for top-k, then SDK for full rows).
-- **`TableManager`** — Create, drop, list, and inspect VastDB tables.
+- **`VastDBCatalog`** — Daft `Catalog` backed by VastDB: create, drop, list, and read/write tables via the standard Daft catalog API.
+- **`VastDBTable`** — Daft `Table` backed by a single VastDB table (read/append/overwrite).
 - **Predicate helpers** — `where_equal`, `where_in`, `where_between`, `where_contains`, and combinators (`and_`, `or_`).
 
 ## Installation
@@ -119,17 +120,31 @@ source = VectorSearchDataSource(
 df = source.read()  # includes a 'distance' column
 ```
 
-### Table Management
+### Catalog & Table Management
 
 ```python
-from vast_daft import VastDBConfig, TableManager
+from vast_daft import VastDBCatalog, VastDBConfig
+from daft.schema import Schema
+import pyarrow as pa
 
 config = VastDBConfig(...)
-mgr = TableManager(config)
+catalog = VastDBCatalog(config)
 
-mgr.ensure_table("my_table", schema)
-print(mgr.list_tables())
-mgr.drop_table("old_table")
+# List tables
+print(catalog.list_tables())
+
+# Create a table
+schema = Schema.from_pyarrow_schema(pa.schema([("id", pa.int64()), ("name", pa.utf8())]))
+table = catalog.create_table_if_not_exists("my_table", schema)
+
+# Read into a DataFrame
+df = catalog.read_table("my_table")
+
+# Write back
+catalog.write_table("my_table", df, mode="append")
+
+# Drop
+catalog.drop_table("old_table")
 ```
 
 ## Configuration

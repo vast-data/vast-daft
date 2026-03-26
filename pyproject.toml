@@ -14,7 +14,7 @@ dependencies = [
     "pyarrow>=15.0",
     "adbc-driver-manager>=1.0",
     "ibis-framework>=9.0",
-    "daft>=0.7.5",
+    "daft[ray]>=0.7.5",
     "pyiceberg[s3fs,sql-sqlite]>=0.11.1",
 ]
 

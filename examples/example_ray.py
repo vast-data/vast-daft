@@ -32,10 +32,16 @@ from vast_daft import (
     VastDBDataSource,
 )
 
+# $ ray job submit \
+#   --address "http://127.0.0.1:8265" \
+#   --working-dir . \
+#   --runtime-env-json '{"py_modules": ["./src/vast_daft"]}' \
+#   -- python examples/example_ray.py 2>&1
+
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-ENDPOINT = "127.0.0.1:9998"
+ENDPOINT = "http://vippool.ie-dev-pipeline.svc.cluster.local"
 BUCKET = "collections-bucket"
 SCHEMA = "collections-schema"
 
@@ -48,21 +54,13 @@ log = logging.getLogger("example")
 
 def load_config() -> VastDBConfig:
     """Load credentials from .env and build a VastDBConfig."""
-    env_path = Path(__file__).resolve().parent.parent / ".env"
-    if not env_path.exists():
-        sys.exit(f"ERROR: .env file not found at {env_path}")
-
-    load_dotenv(env_path)
-
-    access_key = os.environ.get("S3_ACCESS_KEY")
-    secret_key = os.environ.get("S3_SECRET_KEY")
-    if not access_key or not secret_key:
-        sys.exit("ERROR: S3_ACCESS_KEY and S3_SECRET_KEY must be set in .env")
+    S3_ACCESS_KEY="7P2486YDRB97497707R2"
+    S3_SECRET_KEY="JGAD1JyssLJ3KQ1G2MQp06m/BsefdeZequVb008u"
 
     return VastDBConfig(
         endpoint=ENDPOINT,
-        access_key=access_key,
-        secret_key=secret_key,
+        access_key=S3_ACCESS_KEY,
+        secret_key=S3_SECRET_KEY,
         bucket=BUCKET,
         schema=SCHEMA,
         ssl_verify=False,
@@ -87,7 +85,7 @@ def demo_table_management(catalog: VastDBCatalog) -> None:
     demo_schema = pa.schema(
         [
             ("id", pa.int64()),
-            ("name", pa.utf8()),
+            ("name", pa.string()),
             ("score", pa.float64()),
         ]
     )
@@ -131,7 +129,7 @@ def demo_write(config: VastDBConfig, catalog: VastDBCatalog) -> None:
     demo_schema = pa.schema(
         [
             ("id", pa.int64()),
-            ("name", pa.utf8()),
+            ("name", pa.string()),
             ("score", pa.float64()),
         ]
     )
