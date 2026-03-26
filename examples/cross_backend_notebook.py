@@ -1,4 +1,4 @@
-import marimo
+import marimo  # type: ignore[import]
 
 __generated_with = "0.13.0"
 app = marimo.App(width="medium")
@@ -19,7 +19,7 @@ def _(mo):
 
 @app.cell
 def _():
-    import marimo as mo
+    import marimo as mo  # type: ignore[import]
 
     return (mo,)
 

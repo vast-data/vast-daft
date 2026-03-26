@@ -31,10 +31,6 @@ from vast_daft import (
     VastDBConfig,
     VastDBDataSink,
     VastDBDataSource,
-    and_,
-    where_between,
-    where_equal,
-    where_in,
 )
 
 # ---------------------------------------------------------------------------
@@ -341,50 +337,51 @@ def main() -> None:
             config=config,
             table_name=JOINED_TABLE,
             table_schema=JOINED_SCHEMA,
-            limit=10,
         )
-        src.read().show()
+        src.read().limit(10).show()
 
     # ------------------------------------------------------------------
-    # Step 6b: Predicate pushdown queries
+    # Step 6b: Predicate pushdown queries (Daft native filters, pushed down automatically)
     # ------------------------------------------------------------------
-    # Query 1: Filter customers by tier (server-side predicate)
+    # Query 1: Filter customers by tier (Daft native .filter())
     with timed("Predicate: customers WHERE tier = 'platinum'"):
         src = VastDBDataSource(
             config=config,
             table_name=CUSTOMERS_TABLE,
             table_schema=CUSTOMERS_SCHEMA,
-            predicate=where_equal("tier", "platinum"),
             num_splits=4,
         )
-        df_plat = src.read().collect()
+        df_plat = src.read().filter(daft.col("tier") == daft.lit("platinum")).collect()
         print(f"  Platinum customers: {len(df_plat):,} rows")
 
-    # Query 2: Filter orders by amount range (server-side predicate)
+    # Query 2: Filter orders by amount range (Daft native .filter())
     with timed("Predicate: orders WHERE amount BETWEEN 200 AND 500"):
         src = VastDBDataSource(
             config=config,
             table_name=ORDERS_TABLE,
             table_schema=ORDERS_SCHEMA,
-            predicate=where_between("amount", 200.0, 500.0),
             num_splits=4,
         )
-        df_high = src.read().collect()
+        df_high = (
+            src.read()
+            .filter((daft.col("amount") >= daft.lit(200.0)) & (daft.col("amount") <= daft.lit(500.0)))
+            .collect()
+        )
         print(f"  High-value orders: {len(df_high):,} rows")
 
-    # Query 3: Filter joined table — compound predicate
+    # Query 3: Filter joined table — compound predicate (Daft native .filter())
     with timed("Predicate: joined WHERE tier IN ('gold','platinum') AND amount >= 300"):
         src = VastDBDataSource(
             config=config,
             table_name=JOINED_TABLE,
             table_schema=JOINED_SCHEMA,
-            predicate=and_(
-                where_in("tier", ["gold", "platinum"]),
-                where_between("amount", 300.0, 500.0),
-            ),
             num_splits=4,
         )
-        df_vip = src.read().collect()
+        df_vip = (
+            src.read()
+            .filter(daft.col("tier").is_in(["gold", "platinum"]) & (daft.col("amount") >= daft.lit(300.0)))
+            .collect()
+        )
         print(f"  VIP high-spend rows: {len(df_vip):,} rows")
 
     # Query 4: Column projection — read only 2 columns from joined table
@@ -393,23 +390,25 @@ def main() -> None:
             config=config,
             table_name=JOINED_TABLE,
             table_schema=JOINED_SCHEMA,
-            columns=["customer_id", "amount"],
             num_splits=4,
         )
-        df_proj = src.read().collect()
+        df_proj = src.read().select(daft.col("customer_id"), daft.col("amount")).collect()
         print(f"  Projected rows: {len(df_proj):,} rows")
 
-    # Query 5: Predicate + projection combined
+    # Query 5: Predicate + projection combined (Daft native .filter() + column selection)
     with timed("Predicate+Projection: joined WHERE tier='gold', cols=(name, amount)"):
         src = VastDBDataSource(
             config=config,
             table_name=JOINED_TABLE,
             table_schema=JOINED_SCHEMA,
-            predicate=where_equal("tier", "gold"),
-            columns=["name", "amount"],
             num_splits=4,
         )
-        df_combo = src.read().collect()
+        df_combo = (
+            src.read()
+            .select(daft.col("name"), daft.col("amount"), daft.col("tier"))
+            .filter(daft.col("tier") == daft.lit("gold"))
+            .collect()
+        )
         print(f"  Gold tier (name, amount): {len(df_combo):,} rows")
 
     # ------------------------------------------------------------------

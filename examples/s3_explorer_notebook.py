@@ -1,4 +1,4 @@
-import marimo
+import marimo  # pyright: ignore[reportMissingImports]
 
 __generated_with = "0.13.0"
 app = marimo.App(width="medium")

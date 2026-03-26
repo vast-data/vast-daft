@@ -185,7 +185,7 @@ def main() -> None:
 
     # Filtered read — only high scorers
     print("  Filtered (score > 90):")
-    df_read.where(daft.col("score") > 90.0).show()
+    df_read.where(daft.col("score") > daft.lit(90.0)).show()
 
     # Projection
     print("  Projection (name, score):")

@@ -22,6 +22,7 @@ from __future__ import annotations
 import logging
 import time
 from pathlib import Path
+from typing import Any
 
 import daft
 import pyarrow as pa
@@ -202,7 +203,7 @@ def make_io_config() -> IOConfig:
 # ---------------------------------------------------------------------------
 # Data generation
 # ---------------------------------------------------------------------------
-def generate_orders(n: int, num_customers: int) -> dict[str, list[object]]:
+def generate_orders(n: int, num_customers: int) -> dict[str, Any]:
     import random
 
     random.seed(123)
@@ -228,7 +229,7 @@ def generate_orders(n: int, num_customers: int) -> dict[str, list[object]]:
     }
 
 
-def generate_customers(n: int) -> dict[str, list[object]]:
+def generate_customers(n: int) -> dict[str, Any]:
     import random
 
     random.seed(42)
@@ -241,7 +242,7 @@ def generate_customers(n: int) -> dict[str, list[object]]:
     }
 
 
-def generate_product_catalog() -> dict[str, list[object]]:
+def generate_product_catalog() -> dict[str, Any]:
     return {
         "product": [
             "Widget A",

@@ -37,12 +37,14 @@ import daft
 import pyarrow as pa
 from dotenv import load_dotenv
 
+from daft import col, lit
 from vast_daft import (
     VastDBCatalog,
     VastDBConfig,
     VastDBDataSink,
     VastDBDataSource,
 )
+
 
 # ---------------------------------------------------------------------------
 # Configuration
@@ -55,6 +57,8 @@ logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s  %(levelname)-8s  %(name)s — %(message)s",
 )
+# Show push-down decisions from vast_daft internals
+logging.getLogger("vast_daft").setLevel(logging.DEBUG)
 log = logging.getLogger("example")
 
 
@@ -81,6 +85,106 @@ def print_schema(schema: pa.Schema) -> None:
 # ---------------------------------------------------------------------------
 # Demo functions
 # ---------------------------------------------------------------------------
+
+
+def demo_pushdown(config: VastDBConfig, catalog: VastDBCatalog) -> None:
+    """Experiment: all three push-down paths via Daft.
+
+    Demonstrates that Daft automatically pushes down filters, column
+    projections, and row limits to VastDB server-side via get_tasks():
+
+    - Filter push-down:  .filter(col(...) == ...) → ibis predicate
+    - Column push-down:  .select(col(...), ...) → columns list
+    - Limit push-down:   .limit(n) → per-split row cap
+
+    Enable vast_daft DEBUG logging (see top of file) to see push-down
+    decisions logged for each operation.
+    """
+    demo_table = "__pushdown_experiment__"
+    demo_schema = pa.schema(
+        [
+            ("id", pa.int64()),
+            ("name", pa.string()),
+            ("score", pa.float64()),
+        ]
+    )
+
+    print("\n=== Push-down Experiment (filter / column / limit) ===")
+
+    # Setup: write known rows
+    df = daft.from_pydict(
+        {
+            "id": [1, 2, 3, 4, 5],
+            "name": ["alice", "bob", "charlie", "dave", "eve"],
+            "score": [0.1, 0.2, 0.3, 0.4, 0.5],
+        }
+    )
+    sink = VastDBDataSink(
+        config=config,
+        table_name=demo_table,
+        table_schema=demo_schema,
+        create_if_missing=True,
+    )
+    df.write_sink(sink)
+    print(f"  Wrote 5 rows to {demo_table!r}")
+
+    def _check(label: str, result_df, expected_rows: int) -> None:
+        collected = result_df.collect()
+        n = collected.count_rows()
+        status = "OK" if n == expected_rows else f"FAIL (expected {expected_rows}, got {n})"
+        print(f"    -> {n} row(s) [{status}]")
+        result_df.show()
+        assert n == expected_rows, f"{label}: expected {expected_rows} rows, got {n}"
+
+    src = VastDBDataSource(config=config, table_name=demo_table, table_schema=demo_schema)
+
+    # --- Filter push-down ---
+    # Watch for "Applying Daft filter push-down to VastDB" in DEBUG logs.
+    print("\n  [1] Filter: col('id') == 3 — expect 1 row, PUSHED DOWN:")
+    _check(
+        "filter equal",
+        src.read().filter(col("id") == lit(3)),
+        expected_rows=1,
+    )
+
+    print("\n  [2] Filter: score range — expect 3 rows, PUSHED DOWN:")
+    _check(
+        "filter range",
+        src.read().filter((col("score") >= lit(0.2)) & (col("score") <= lit(0.4))),
+        expected_rows=3,
+    )
+
+    print("\n  [3] Filter: col('name').is_in([...]) — expect 2 rows, PUSHED DOWN:")
+    _check(
+        "filter is_in",
+        src.read().filter(col("name").is_in(["alice", "eve"])),
+        expected_rows=2,
+    )
+
+    # --- Column push-down ---
+    # Watch for "Applying Daft column push-down to VastDB" in DEBUG logs.
+    print("\n  [4] Column projection: select('id', 'name') — expect 5 rows, 2 cols, PUSHED DOWN:")
+    result = src.read().select(col("id"), col("name"))
+    result.show()
+    collected = result.collect()
+    assert collected.count_rows() == 5, f"column pushdown: expected 5 rows, got {collected.count_rows()}"
+    schema_names = [f.name for f in collected.schema().to_pyarrow_schema()]
+    assert schema_names == ["id", "name"], f"column pushdown: unexpected columns {schema_names}"
+    print("    -> OK (2 columns projected)")
+
+    # --- Limit push-down ---
+    # Watch for "Applying Daft limit push-down to VastDB" in DEBUG logs.
+    print("\n  [5] Limit: .limit(2) — expect at most 2 rows, PUSHED DOWN:")
+    result = src.read().limit(2)
+    result.show()
+    n = result.collect().count_rows()
+    assert n <= 2, f"limit pushdown: expected <= 2 rows, got {n}"
+    print(f"    -> {n} row(s) [OK]")
+
+    # Cleanup
+    catalog.drop_table(demo_table)
+    print(f"\n  Cleaned up {demo_table!r}")
+    print("\n=== All push-down assertions passed ===\n")
 
 
 def demo_table_management(catalog: VastDBCatalog) -> None:
@@ -311,6 +415,11 @@ def main() -> None:
 
         print("\n--- Step 5: Table Management Demo ---")
         demo_table_management(catalog)
+
+    # ------------------------------------------------------------------
+    # Predicate push-down experiment
+    # ------------------------------------------------------------------
+    demo_pushdown(config, catalog)
 
     # ------------------------------------------------------------------
     # Mode 2: bucket fixed, schema in identifier

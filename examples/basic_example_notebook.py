@@ -1,4 +1,4 @@
-import marimo
+import marimo  # type: ignore[import]
 
 __generated_with = "0.13.0"
 app = marimo.App(width="medium")
@@ -22,7 +22,7 @@ def _(mo):
 
 @app.cell
 def _():
-    import marimo as mo
+    import marimo as mo  # type: ignore[import]
 
     return (mo,)
 
@@ -40,10 +40,6 @@ def _():
         VastDBConfig,
         VastDBDataSink,
         VastDBDataSource,
-        and_,
-        where_between,
-        where_equal,
-        where_in,
     )
 
     return (
@@ -51,14 +47,10 @@ def _():
         VastDBConfig,
         VastDBDataSink,
         VastDBDataSource,
-        and_,
         daft,
         os,
         pa,
         time,
-        where_between,
-        where_equal,
-        where_in,
     )
 
 
@@ -364,8 +356,8 @@ def _(JOINED_SCHEMA, JOINED_TABLE, VastDBDataSink, VastDBDataSource, catalog, co
     print(f"Wrote joined table in {_elapsed:.2f}s")
 
     print("\nVerify — read back:")
-    _src = VastDBDataSource(config=config, table_name=JOINED_TABLE, table_schema=JOINED_SCHEMA, limit=10)
-    _src.read().show()
+    _src = VastDBDataSource(config=config, table_name=JOINED_TABLE, table_schema=JOINED_SCHEMA)
+    _src.read().limit(10).show()
     return
 
 
@@ -376,68 +368,71 @@ def _(mo):
 
 
 @app.cell
-def _(CUSTOMERS_SCHEMA, CUSTOMERS_TABLE, VastDBDataSource, config, time, where_equal):
+def _(CUSTOMERS_SCHEMA, CUSTOMERS_TABLE, VastDBDataSource, config, daft, time):
     _t0 = time.perf_counter()
     _src = VastDBDataSource(
         config=config,
         table_name=CUSTOMERS_TABLE,
         table_schema=CUSTOMERS_SCHEMA,
-        predicate=where_equal("tier", "platinum"),
         num_splits=4,
     )
-    _df = _src.read().collect()
+    _df = _src.read().filter(daft.col("tier") == daft.lit("platinum")).collect()
     _elapsed = time.perf_counter() - _t0
     print(f"Platinum customers: {len(_df):,} rows ({_elapsed:.2f}s)")
     return
 
 
 @app.cell
-def _(ORDERS_SCHEMA, ORDERS_TABLE, VastDBDataSource, config, time, where_between):
+def _(ORDERS_SCHEMA, ORDERS_TABLE, VastDBDataSource, config, daft, time):
     _t0 = time.perf_counter()
     _src = VastDBDataSource(
         config=config,
         table_name=ORDERS_TABLE,
         table_schema=ORDERS_SCHEMA,
-        predicate=where_between("amount", 200.0, 500.0),
         num_splits=4,
     )
-    _df = _src.read().collect()
+    _df = (
+        _src.read().filter((daft.col("amount") >= daft.lit(200.0)) & (daft.col("amount") <= daft.lit(500.0))).collect()
+    )
     _elapsed = time.perf_counter() - _t0
     print(f"High-value orders (200-500): {len(_df):,} rows ({_elapsed:.2f}s)")
     return
 
 
 @app.cell
-def _(JOINED_SCHEMA, JOINED_TABLE, VastDBDataSource, and_, config, time, where_between, where_in):
+def _(JOINED_SCHEMA, JOINED_TABLE, VastDBDataSource, config, daft, time):
     _t0 = time.perf_counter()
     _src = VastDBDataSource(
         config=config,
         table_name=JOINED_TABLE,
         table_schema=JOINED_SCHEMA,
-        predicate=and_(
-            where_in("tier", ["gold", "platinum"]),
-            where_between("amount", 300.0, 500.0),
-        ),
         num_splits=4,
     )
-    _df = _src.read().collect()
+    _df = (
+        _src.read()
+        .filter(daft.col("tier").is_in(["gold", "platinum"]) & (daft.col("amount") >= daft.lit(300.0)))
+        .collect()
+    )
     _elapsed = time.perf_counter() - _t0
     print(f"VIP high-spend rows: {len(_df):,} rows ({_elapsed:.2f}s)")
     return
 
 
 @app.cell
-def _(JOINED_SCHEMA, JOINED_TABLE, VastDBDataSource, config, time, where_equal):
+def _(JOINED_SCHEMA, JOINED_TABLE, VastDBDataSource, config, daft, time):
     _t0 = time.perf_counter()
     _src = VastDBDataSource(
         config=config,
         table_name=JOINED_TABLE,
         table_schema=JOINED_SCHEMA,
-        predicate=where_equal("tier", "gold"),
-        columns=["name", "amount"],
         num_splits=4,
     )
-    _df = _src.read().collect()
+    _df = (
+        _src.read()
+        .select(daft.col("name"), daft.col("amount"), daft.col("tier"))
+        .filter(daft.col("tier") == daft.lit("gold"))
+        .collect()
+    )
     _elapsed = time.perf_counter() - _t0
     print(f"Gold tier (name, amount): {len(_df):,} rows ({_elapsed:.2f}s)")
     return
