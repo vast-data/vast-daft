@@ -1,12 +1,24 @@
 #!/usr/bin/env python3
 """Example: Read and write VastDB tables using vast-daft.
 
-This script demonstrates:
-  1. Table discovery  — list tables in a VastDB schema
-  2. Schema discovery — detect column types at runtime (no hardcoded schema)
-  3. Reading          — use VastDBDataSource to read into a Daft DataFrame
-  4. Writing          — use VastDBDataSink to write a Daft DataFrame back
-  5. Table management — create, check existence, row count, and drop tables
+This script demonstrates three catalog configuration modes that mirror the
+Unity Catalog / Iceberg identifier convention:
+
+  Mode 1 — both bucket and schema fixed in config (backward-compatible):
+      config = VastDBConfig(..., bucket="b", schema="s")
+      catalog.get_table("my_table")          # just the table name
+      catalog.get_table("ns.my_table")       # sub-schema + table
+
+  Mode 2 — bucket fixed, schema supplied in the identifier:
+      config = VastDBConfig(..., bucket="b")
+      catalog.get_table("my_schema.my_table")
+
+  Mode 3 — neither bucket nor schema fixed (fully-qualified identifiers):
+      config = VastDBConfig(...)
+      catalog.get_table("my_bucket.my_schema.my_table")
+
+The demo below uses Mode 1 (both fixed) for the main workflow, then shows
+short Mode 2 and Mode 3 examples using the same VastDB endpoint.
 
 Prerequisites:
   - A `.env` file in the project root with S3_ACCESS_KEY and S3_SECRET_KEY
@@ -46,27 +58,17 @@ logging.basicConfig(
 log = logging.getLogger("example")
 
 
-def load_config() -> VastDBConfig:
-    """Load credentials from .env and build a VastDBConfig."""
+def load_credentials() -> tuple[str, str]:
+    """Load S3_ACCESS_KEY and S3_SECRET_KEY from .env."""
     env_path = Path(__file__).resolve().parent.parent / ".env"
     if not env_path.exists():
         sys.exit(f"ERROR: .env file not found at {env_path}")
-
     load_dotenv(env_path)
-
     access_key = os.environ.get("S3_ACCESS_KEY")
     secret_key = os.environ.get("S3_SECRET_KEY")
     if not access_key or not secret_key:
         sys.exit("ERROR: S3_ACCESS_KEY and S3_SECRET_KEY must be set in .env")
-
-    return VastDBConfig(
-        endpoint=ENDPOINT,
-        access_key=access_key,
-        secret_key=secret_key,
-        bucket=BUCKET,
-        schema=SCHEMA,
-        ssl_verify=False,
-    )
+    return access_key, secret_key
 
 
 def print_schema(schema: pa.Schema) -> None:
@@ -79,6 +81,8 @@ def print_schema(schema: pa.Schema) -> None:
 # ---------------------------------------------------------------------------
 # Demo functions
 # ---------------------------------------------------------------------------
+
+
 def demo_table_management(catalog: VastDBCatalog) -> None:
     """Show table management: create, exists, row count, drop."""
     from daft.schema import Schema
@@ -87,58 +91,46 @@ def demo_table_management(catalog: VastDBCatalog) -> None:
     demo_schema = pa.schema(
         [
             ("id", pa.int64()),
-            ("name", pa.utf8()),
+            ("name", pa.string()),
             ("score", pa.float64()),
         ]
     )
 
     print("\n--- Table Management Demo ---")
 
-    # Create
     catalog.create_table_if_not_exists(demo_table, Schema.from_pyarrow_schema(demo_schema))
     print(f"  Created table {demo_table!r}")
 
-    # Exists
     exists = catalog.has_table(demo_table)
     print(f"  Exists? {exists}")
-    # Row count
+
     count = catalog.read_table(demo_table).collect().count_rows()
     print(f"  Row count: {count}")
 
-    # Drop
     catalog.drop_table(demo_table)
     print(f"  Dropped {demo_table!r}")
     print(f"  Exists after drop? {catalog.has_table(demo_table)}")
 
 
-def demo_read(config: VastDBConfig, table_name: str, schema: pa.Schema) -> None:
-    """Read from VastDB using the Daft DataSource."""
+def demo_read(catalog: VastDBCatalog, table_name: str) -> None:
+    """Read from VastDB via the catalog (works in all 3 config modes)."""
     print(f"\n--- Read Demo (table={table_name!r}) ---")
-
-    source = VastDBDataSource(
-        config=config,
-        table_name=table_name,
-        table_schema=schema,
-        limit=20,
-    )
-    df = source.read()
-    df.show()
+    catalog.read_table(table_name).limit(20).show()
 
 
 def demo_write(config: VastDBConfig, catalog: VastDBCatalog) -> None:
-    """Write to VastDB using the Daft DataSink."""
+    """Write to VastDB using the Daft DataSink, then read back."""
     demo_table = "__vast_daft_write_example__"
     demo_schema = pa.schema(
         [
             ("id", pa.int64()),
-            ("name", pa.utf8()),
+            ("name", pa.string()),
             ("score", pa.float64()),
         ]
     )
 
     print(f"\n--- Write Demo (table={demo_table!r}) ---")
 
-    # Build a small Daft DataFrame
     df = daft.from_pydict(
         {
             "id": [1, 2, 3],
@@ -149,7 +141,6 @@ def demo_write(config: VastDBConfig, catalog: VastDBCatalog) -> None:
     print("  Data to write:")
     df.show()
 
-    # Write via the sink
     sink = VastDBDataSink(
         config=config,
         table_name=demo_table,
@@ -160,56 +151,176 @@ def demo_write(config: VastDBConfig, catalog: VastDBCatalog) -> None:
     print("  Write result:")
     result.show()
 
-    # Read back to verify
     print("  Reading back:")
-    read_source = VastDBDataSource(
+    VastDBDataSource(
         config=config,
         table_name=demo_table,
         table_schema=demo_schema,
-    )
-    read_source.read().show()
+    ).read().show()
 
-    # Cleanup
     catalog.drop_table(demo_table)
     print(f"  Cleaned up {demo_table!r}")
 
 
 # ---------------------------------------------------------------------------
+# Mode 2 demo: bucket fixed, schema from identifier
+# ---------------------------------------------------------------------------
+
+
+def demo_mode2(access_key: str, secret_key: str) -> None:
+    """Mode 2: config has bucket only; schema is part of the identifier.
+
+    Table identifiers must be "schema.table" (or "schema.ns.table").
+    """
+    print("\n=== Mode 2: bucket fixed, schema in identifier ===")
+
+    # Config — no schema set
+    config = VastDBConfig(
+        endpoint=ENDPOINT,
+        access_key=access_key,
+        secret_key=secret_key,
+        bucket=BUCKET,
+        ssl_verify=False,
+    )
+    catalog = VastDBCatalog(config, alias="vastdb-bucket")
+
+    demo_table = "__mode2_example__"
+    demo_schema = pa.schema([("id", pa.int64()), ("label", pa.string())])
+
+    from daft.schema import Schema
+
+    # Create via "schema.table" identifier
+    full_ident = f"{SCHEMA}.{demo_table}"
+    catalog.create_table_if_not_exists(full_ident, Schema.from_pyarrow_schema(demo_schema))
+    print(f"  Created: {full_ident!r}")
+
+    # Write via DataSink with explicit schema kwarg
+    df = daft.from_pydict({"id": [10, 20], "label": ["x", "y"]})
+    sink = VastDBDataSink(
+        config=config,
+        table_name=demo_table,
+        table_schema=demo_schema,
+        schema=SCHEMA,  # schema supplied explicitly
+        create_if_missing=False,
+    )
+    df.write_sink(sink).show()
+
+    # Read via catalog using "schema.table"
+    print(f"  Reading {full_ident!r}:")
+    catalog.read_table(full_ident).show()
+
+    # List tables — returns "schema.table" identifiers
+    tables = catalog.list_tables()
+    print(f"  Tables (schema-qualified): {[str(t) for t in tables]}")
+
+    catalog.drop_table(full_ident)
+    print(f"  Dropped: {full_ident!r}")
+
+
+# ---------------------------------------------------------------------------
+# Mode 3 demo: no bucket or schema fixed — fully-qualified identifiers
+# ---------------------------------------------------------------------------
+
+
+def demo_mode3(access_key: str, secret_key: str) -> None:
+    """Mode 3: config has neither bucket nor schema.
+
+    Table identifiers must be "bucket.schema.table".
+    """
+    print("\n=== Mode 3: no bucket/schema in config — fully-qualified identifiers ===")
+
+    # Config — no bucket, no schema
+    config = VastDBConfig(
+        endpoint=ENDPOINT,
+        access_key=access_key,
+        secret_key=secret_key,
+        ssl_verify=False,
+    )
+    catalog = VastDBCatalog(config, alias="vastdb")
+
+    demo_table = "__mode3_example__"
+    demo_schema = pa.schema([("id", pa.int64()), ("value", pa.float64())])
+
+    from daft.schema import Schema
+
+    full_ident = f"{BUCKET}.{SCHEMA}.{demo_table}"
+    catalog.create_table_if_not_exists(full_ident, Schema.from_pyarrow_schema(demo_schema))
+    print(f"  Created: {full_ident!r}")
+
+    # Write via DataSink with both bucket and schema kwarg
+    df = daft.from_pydict({"id": [1], "value": [3.14]})
+    sink = VastDBDataSink(
+        config=config,
+        table_name=demo_table,
+        table_schema=demo_schema,
+        bucket=BUCKET,
+        schema=SCHEMA,
+        create_if_missing=False,
+    )
+    df.write_sink(sink).show()
+
+    print(f"  Reading {full_ident!r}:")
+    catalog.read_table(full_ident).show()
+
+    catalog.drop_table(full_ident)
+    print(f"  Dropped: {full_ident!r}")
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
+
+
 def main() -> None:
-    config = load_config()
+    access_key, secret_key = load_credentials()
+
+    # ------------------------------------------------------------------
+    # Mode 1: both bucket and schema fixed (backward-compatible)
+    # ------------------------------------------------------------------
+    print("\n=== Mode 1: bucket + schema fixed in config (backward-compatible) ===")
+    config = VastDBConfig(
+        endpoint=ENDPOINT,
+        access_key=access_key,
+        secret_key=secret_key,
+        bucket=BUCKET,
+        schema=SCHEMA,
+        ssl_verify=False,
+    )
     catalog = VastDBCatalog(config)
 
     # 1. List tables
-    print("\n=== Step 1: Table Discovery ===")
+    print("\n--- Step 1: Table Discovery ---")
     tables = catalog.list_tables()
     if not tables:
-        print("No tables found — running write + table-management demos only.\n")
+        print("No tables found — running write + table-management demos only.")
         demo_table_management(catalog)
         demo_write(config, catalog)
-        return
+    else:
+        print(f"Found {len(tables)} table(s) in {BUCKET}/{SCHEMA}")
 
-    print(f"Found {len(tables)} table(s) in {BUCKET}/{SCHEMA}")
+        table_name = str(tables[0])
+        print(f"\n--- Step 2: Schema Discovery ({table_name!r}) ---")
+        schema = catalog.get_table(table_name).schema().to_pyarrow_schema()
+        print_schema(schema)
 
-    # 2. Pick a table & discover its schema
-    table_name = "chunks"
+        print("\n--- Step 3: Read Demo ---")
+        demo_read(catalog, table_name)
 
-    print(f"\n=== Step 2: Schema Discovery ({table_name!r}) ===")
-    schema = catalog.get_table(table_name).schema().to_pyarrow_schema()
-    print_schema(schema)
+        print("\n--- Step 4: Write Demo ---")
+        demo_write(config, catalog)
 
-    # 3. Read from the selected table
-    print("\n=== Step 3: Read Demo ===")
-    demo_read(config, table_name, schema)
+        print("\n--- Step 5: Table Management Demo ---")
+        demo_table_management(catalog)
 
-    # 4. Write demo (separate table)
-    print("\n=== Step 4: Write Demo ===")
-    demo_write(config, catalog)
+    # ------------------------------------------------------------------
+    # Mode 2: bucket fixed, schema in identifier
+    # ------------------------------------------------------------------
+    demo_mode2(access_key, secret_key)
 
-    # 5. Table management demo
-    print("\n=== Step 5: Table Management Demo ===")
-    demo_table_management(catalog)
+    # ------------------------------------------------------------------
+    # Mode 3: no bucket/schema fixed — fully-qualified identifiers
+    # ------------------------------------------------------------------
+    demo_mode3(access_key, secret_key)
 
     print("\nDone.")
 

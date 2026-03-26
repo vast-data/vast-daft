@@ -5,6 +5,11 @@ Generates random customer and order data, writes to VastDB, reads back,
 joins, computes aggregates, and cleans up — all distributed across a Ray
 cluster.
 
+Catalog configuration mode used here:
+  **Mode 1** — both bucket and schema fixed in VastDBConfig.
+  Table identifiers are just the table name: ``catalog.get_table("my_table")``.
+  See example.py for a full demonstration of all three modes.
+
 Run via:
     ray job submit \
       --address "http://127.0.0.1:8265" \

@@ -8,7 +8,7 @@ app = marimo.App(width="medium")
 def _(mo):
     mo.md(
         """
-        # VastDB + Daft + Ray — Combined Example
+        # VastDB + Daft Basic Example
 
         Distributed read/write on a Ray cluster via Marimo.
 
@@ -23,6 +23,7 @@ def _(mo):
 @app.cell
 def _():
     import marimo as mo
+
     return (mo,)
 
 
@@ -45,7 +46,20 @@ def _():
         where_in,
     )
 
-    return VastDBCatalog, VastDBConfig, VastDBDataSink, VastDBDataSource, and_, daft, os, pa, time, where_between, where_equal, where_in
+    return (
+        VastDBCatalog,
+        VastDBConfig,
+        VastDBDataSink,
+        VastDBDataSource,
+        and_,
+        daft,
+        os,
+        pa,
+        time,
+        where_between,
+        where_equal,
+        where_in,
+    )
 
 
 @app.cell
@@ -99,31 +113,37 @@ def _(pa):
     ORDERS_TABLE = "__ray_combined_orders__"
     JOINED_TABLE = "__ray_combined_joined__"
 
-    CUSTOMERS_SCHEMA = pa.schema([
-        ("customer_id", pa.int64()),
-        ("name", pa.string()),
-        ("email", pa.string()),
-        ("tier", pa.string()),
-    ])
+    CUSTOMERS_SCHEMA = pa.schema(
+        [
+            ("customer_id", pa.int64()),
+            ("name", pa.string()),
+            ("email", pa.string()),
+            ("tier", pa.string()),
+        ]
+    )
 
-    ORDERS_SCHEMA = pa.schema([
-        ("order_id", pa.int64()),
-        ("customer_id", pa.int64()),
-        ("product", pa.string()),
-        ("amount", pa.float64()),
-        ("order_date", pa.string()),
-    ])
+    ORDERS_SCHEMA = pa.schema(
+        [
+            ("order_id", pa.int64()),
+            ("customer_id", pa.int64()),
+            ("product", pa.string()),
+            ("amount", pa.float64()),
+            ("order_date", pa.string()),
+        ]
+    )
 
-    JOINED_SCHEMA = pa.schema([
-        ("customer_id", pa.int64()),
-        ("name", pa.string()),
-        ("email", pa.string()),
-        ("tier", pa.string()),
-        ("order_id", pa.int64()),
-        ("product", pa.string()),
-        ("amount", pa.float64()),
-        ("order_date", pa.string()),
-    ])
+    JOINED_SCHEMA = pa.schema(
+        [
+            ("customer_id", pa.int64()),
+            ("name", pa.string()),
+            ("email", pa.string()),
+            ("tier", pa.string()),
+            ("order_id", pa.int64()),
+            ("product", pa.string()),
+            ("amount", pa.float64()),
+            ("order_date", pa.string()),
+        ]
+    )
     return CUSTOMERS_SCHEMA, CUSTOMERS_TABLE, JOINED_SCHEMA, JOINED_TABLE, ORDERS_SCHEMA, ORDERS_TABLE
 
 
@@ -136,6 +156,7 @@ def _(mo):
 @app.cell
 def _(NUM_CUSTOMERS):
     import random as _random
+
     _random.seed(42)
 
     _n = NUM_CUSTOMERS.value
@@ -153,13 +174,22 @@ def _(NUM_CUSTOMERS):
 @app.cell
 def _(NUM_CUSTOMERS, NUM_ORDERS):
     import random as _random2
+
     _random2.seed(123)
 
     _n = NUM_ORDERS.value
     _num_cust = NUM_CUSTOMERS.value
     _products = [
-        "Widget A", "Widget B", "Gadget X", "Gadget Y", "Thingamajig",
-        "Doohickey", "Contraption Z", "Module Pro", "Sensor Lite", "Adapter Max",
+        "Widget A",
+        "Widget B",
+        "Gadget X",
+        "Gadget Y",
+        "Thingamajig",
+        "Doohickey",
+        "Contraption Z",
+        "Module Pro",
+        "Sensor Lite",
+        "Adapter Max",
     ]
     orders_data = {
         "order_id": list(range(1001, 1001 + _n)),
@@ -261,10 +291,8 @@ def _(mo):
 @app.cell
 def _(daft, df_customers_read, df_orders_read, time):
     _t0 = time.perf_counter()
-    df_joined = (
-        df_customers_read
-        .join(df_orders_read, on="customer_id", how="inner")
-        .select("customer_id", "name", "email", "tier", "order_id", "product", "amount", "order_date")
+    df_joined = df_customers_read.join(df_orders_read, on="customer_id", how="inner").select(
+        "customer_id", "name", "email", "tier", "order_id", "product", "amount", "order_date"
     )
     df_joined.limit(5).show()
     _elapsed = time.perf_counter() - _t0
@@ -282,8 +310,7 @@ def _(mo):
 def _(daft, df_joined, time):
     _t0 = time.perf_counter()
     df_by_tier = (
-        df_joined
-        .groupby("tier")
+        df_joined.groupby("tier")
         .agg(
             daft.col("amount").sum().alias("total_revenue"),
             daft.col("amount").mean().alias("avg_order"),
@@ -301,8 +328,7 @@ def _(daft, df_joined, time):
 def _(daft, df_joined, time):
     _t0 = time.perf_counter()
     df_top_customers = (
-        df_joined
-        .groupby("name")
+        df_joined.groupby("name")
         .agg(
             daft.col("amount").sum().alias("total_spent"),
             daft.col("order_id").count().alias("num_orders"),

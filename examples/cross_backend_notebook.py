@@ -67,6 +67,7 @@ def _():
 def _(daft, os):
     os.environ["RAY_TQDM_DISABLE"] = "1"
     os.environ["RAY_LOG_TO_DRIVER"] = "0"
+    os.environ["PYTHONWARNINGS"] = "ignore::DeprecationWarning"
     daft.set_runner_ray()
     print(f"Connected to Ray (RAY_ADDRESS={os.environ.get('RAY_ADDRESS', 'not set')})")
     return
@@ -325,7 +326,7 @@ def _(ICEBERG_NAMESPACE, ICEBERG_PRODUCTS_SCHEMA, ICEBERG_PRODUCTS_TABLE, daft, 
             "cost_price": [15.0, 20.0, 45.0, 55.0, 8.0, 5.0, 80.0, 35.0, 12.0, 18.0],
         }
     )
-    df_products.write_iceberg(_iceberg_table, mode="append", io_config=io_config)
+    df_products.write_iceberg(_iceberg_table, mode="append", io_config=io_config).show()
     print(f"Wrote 10 products to Iceberg in {time.perf_counter() - _t0:.2f}s")
     return (df_products,)
 

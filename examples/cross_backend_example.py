@@ -4,6 +4,11 @@
 Demonstrates reading from VastDB and Iceberg simultaneously, joining across
 backends, aggregating, and writing results back — all distributed via Ray.
 
+Catalog configuration mode used here:
+  **Mode 1** — both bucket and schema fixed in VastDBConfig.
+  Table identifiers are just the table name: ``catalog.get_table("my_table")``.
+  See example.py for a full demonstration of all three modes.
+
 Run via:
     ray job submit \
       --address "http://127.0.0.1:8265" \
@@ -35,8 +40,8 @@ from vast_daft import (
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-ENDPOINT = "http://vippool.ie-dev-pipeline.svc.cluster.local"
-S3_ENDPOINT = "http://vippool.ie-dev-pipeline.svc.cluster.local"
+ENDPOINT = "http://127.0.0.1:9998"
+S3_ENDPOINT = ENDPOINT
 BUCKET = "collections-bucket"
 SCHEMA = "collections-schema"
 ACCESS_KEY = "7P2486YDRB97497707R2"
@@ -197,28 +202,33 @@ def make_io_config() -> IOConfig:
 # ---------------------------------------------------------------------------
 # Data generation
 # ---------------------------------------------------------------------------
-def generate_orders(n: int, num_customers: int) -> dict:
+def generate_orders(n: int, num_customers: int) -> dict[str, list[object]]:
     import random
 
     random.seed(123)
 
     products = [
-        "Widget A", "Widget B", "Gadget X", "Gadget Y", "Thingamajig",
-        "Doohickey", "Contraption Z", "Module Pro", "Sensor Lite", "Adapter Max",
+        "Widget A",
+        "Widget B",
+        "Gadget X",
+        "Gadget Y",
+        "Thingamajig",
+        "Doohickey",
+        "Contraption Z",
+        "Module Pro",
+        "Sensor Lite",
+        "Adapter Max",
     ]
     return {
         "order_id": list(range(1001, 1001 + n)),
         "customer_id": [random.randint(1, num_customers) for _ in range(n)],
         "product": [random.choice(products) for _ in range(n)],
         "amount": [round(random.uniform(5.0, 500.0), 2) for _ in range(n)],
-        "order_date": [
-            f"2025-{random.randint(1, 12):02d}-{random.randint(1, 28):02d}"
-            for _ in range(n)
-        ],
+        "order_date": [f"2025-{random.randint(1, 12):02d}-{random.randint(1, 28):02d}" for _ in range(n)],
     }
 
 
-def generate_customers(n: int) -> dict:
+def generate_customers(n: int) -> dict[str, list[object]]:
     import random
 
     random.seed(42)
@@ -231,15 +241,31 @@ def generate_customers(n: int) -> dict:
     }
 
 
-def generate_product_catalog() -> dict:
+def generate_product_catalog() -> dict[str, list[object]]:
     return {
         "product": [
-            "Widget A", "Widget B", "Gadget X", "Gadget Y", "Thingamajig",
-            "Doohickey", "Contraption Z", "Module Pro", "Sensor Lite", "Adapter Max",
+            "Widget A",
+            "Widget B",
+            "Gadget X",
+            "Gadget Y",
+            "Thingamajig",
+            "Doohickey",
+            "Contraption Z",
+            "Module Pro",
+            "Sensor Lite",
+            "Adapter Max",
         ],
         "category": [
-            "Widgets", "Widgets", "Gadgets", "Gadgets", "Misc",
-            "Misc", "Contraptions", "Modules", "Sensors", "Adapters",
+            "Widgets",
+            "Widgets",
+            "Gadgets",
+            "Gadgets",
+            "Misc",
+            "Misc",
+            "Contraptions",
+            "Modules",
+            "Sensors",
+            "Adapters",
         ],
         "weight_kg": [0.5, 0.7, 1.2, 1.5, 0.3, 0.2, 2.1, 0.8, 0.1, 0.4],
         "cost_price": [15.0, 20.0, 45.0, 55.0, 8.0, 5.0, 80.0, 35.0, 12.0, 18.0],
@@ -314,9 +340,7 @@ def main() -> None:
         print("  Wrote 10 products to Iceberg")
 
     with timed("Read product catalog from Iceberg", "Iceberg"):
-        iceberg_table = iceberg_catalog.load_table(
-            f"{ICEBERG_NAMESPACE}.{ICEBERG_PRODUCTS_TABLE}"
-        )
+        iceberg_table = iceberg_catalog.load_table(f"{ICEBERG_NAMESPACE}.{ICEBERG_PRODUCTS_TABLE}")
         df_products_read = daft.read_iceberg(iceberg_table, io_config=io_config)
         df_products_read.show()
 
@@ -345,9 +369,7 @@ def main() -> None:
     # STEP 5: Cross-backend join — VastDB orders x Iceberg products
     # ==================================================================
     with timed("Cross-backend join: VastDB orders x Iceberg products", "VastDB+Iceberg"):
-        iceberg_table = iceberg_catalog.load_table(
-            f"{ICEBERG_NAMESPACE}.{ICEBERG_PRODUCTS_TABLE}"
-        )
+        iceberg_table = iceberg_catalog.load_table(f"{ICEBERG_NAMESPACE}.{ICEBERG_PRODUCTS_TABLE}")
         df_products_fresh = daft.read_iceberg(iceberg_table, io_config=io_config)
 
         df_enriched = df_orders_read.join(
@@ -355,8 +377,13 @@ def main() -> None:
             on="product",
             how="inner",
         ).select(
-            "order_id", "customer_id", "product", "category",
-            "amount", "cost_price", "order_date",
+            "order_id",
+            "customer_id",
+            "product",
+            "category",
+            "amount",
+            "cost_price",
+            "order_date",
         )
         print("  Sample (orders enriched with Iceberg product data):")
         df_enriched.limit(5).show()
@@ -370,8 +397,15 @@ def main() -> None:
             on="customer_id",
             how="inner",
         ).select(
-            "order_id", "customer_id", "product", "category",
-            "amount", "cost_price", "order_date", "name", "tier",
+            "order_id",
+            "customer_id",
+            "product",
+            "category",
+            "amount",
+            "cost_price",
+            "order_date",
+            "name",
+            "tier",
         )
         print("  Sample (full enrichment: order + product + customer):")
         df_full.limit(5).show()
@@ -413,15 +447,11 @@ def main() -> None:
             f"{ICEBERG_NAMESPACE}.{ICEBERG_ENRICHED_TABLE}",
             schema=ICEBERG_ENRICHED_SCHEMA,
         )
-        result = df_full.write_iceberg(
-            iceberg_enriched, mode="append", io_config=io_config
-        )
+        result = df_full.write_iceberg(iceberg_enriched, mode="append", io_config=io_config)
         result.show()
 
     with timed("Verify: read enriched orders from Iceberg", "Iceberg"):
-        iceberg_enriched = iceberg_catalog.load_table(
-            f"{ICEBERG_NAMESPACE}.{ICEBERG_ENRICHED_TABLE}"
-        )
+        iceberg_enriched = iceberg_catalog.load_table(f"{ICEBERG_NAMESPACE}.{ICEBERG_ENRICHED_TABLE}")
         df_verify = daft.read_iceberg(iceberg_enriched, io_config=io_config)
         row_count = df_verify.count().collect().to_pydict()["count"][0]
         print(f"  Total enriched rows: {row_count:,}")

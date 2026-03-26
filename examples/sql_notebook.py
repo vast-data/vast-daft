@@ -258,13 +258,68 @@ ORDER BY month""")
 
 @app.cell
 def _(mo):
+    mo.md(
+        """
+        ## No-Alias Style
+
+        Attach the same catalog **without** an alias.  The catalog name becomes
+        `bucket/schema`, which contains a `/` and must be quoted in SQL with
+        double-quotes:
+
+        ```sql
+        SELECT * FROM "collections-bucket/collections-schema".my_table
+        ```
+        """
+    )
+    return
+
+
+@app.cell
+def _(CATALOG_ALIAS, VastDBCatalog, config, daft):
+    # Detach the aliased catalog first to avoid name collisions
+    daft.detach_catalog(CATALOG_ALIAS)
+
+    catalog_no_alias = VastDBCatalog(config)  # no alias → name = "bucket/schema"
+    daft.attach_catalog(catalog_no_alias)
+    NO_ALIAS_PREFIX = f'"{catalog_no_alias.name}"'  # e.g. "collections-bucket/collections-schema"
+    print(f"Attached catalog without alias. SQL prefix: {NO_ALIAS_PREFIX}")
+    return catalog_no_alias, NO_ALIAS_PREFIX
+
+
+@app.cell
+def _(DEMO_TABLE, NO_ALIAS_PREFIX, daft, time):
+    _t0 = time.perf_counter()
+    df_no_alias = daft.sql(f"""SELECT
+    tier,
+    COUNT(*) AS order_count,
+    ROUND(SUM(amount), 2) AS total_revenue
+FROM {NO_ALIAS_PREFIX}.{DEMO_TABLE}
+GROUP BY tier
+ORDER BY total_revenue DESC""")
+    df_no_alias.show()
+    print(f"Query (no-alias style) completed in {time.perf_counter() - _t0:.2f}s")
+    return (df_no_alias,)
+
+
+@app.cell
+def _(CATALOG_ALIAS, VastDBCatalog, catalog_no_alias, config, daft):
+    # Restore the aliased catalog for any subsequent cells
+    daft.detach_catalog(catalog_no_alias.name)
+    catalog_restored = VastDBCatalog(config, alias=CATALOG_ALIAS)
+    daft.attach_catalog(catalog_restored, CATALOG_ALIAS)
+    print(f"Restored aliased catalog '{CATALOG_ALIAS}'")
+    return (catalog_restored,)
+
+
+@app.cell
+def _(mo):
     mo.md("## Cleanup")
     return
 
 
 @app.cell
-def _(DEMO_TABLE, catalog):
-    catalog.drop_table_if_exists(DEMO_TABLE)
+def _(DEMO_TABLE, catalog_restored):
+    catalog_restored.drop_table_if_exists(DEMO_TABLE)
     print(f"Dropped {DEMO_TABLE}")
     print("Done.")
     return
