@@ -14,9 +14,11 @@ def _(mo):
 
     1. **Join & Aggregate** — join chunks with ingestion status, group by
        status, and count the number of chunks per ingestion status.
-    2. **Cosine Similarity Search** — pick a reference chunk vector and
-       find the most similar chunks using Daft's built-in
-       `cosine_similarity`.
+    2. **Cosine Similarity Search (DataFrame API)** — pick a reference chunk
+       vector and find the most similar chunks using `cosine_similarity`
+       with an explicit cast to `FixedSizeList[Float32]`.
+    3. **Cosine Similarity Search (SQL)** — the same search in pure SQL,
+       where no cast is needed because both sides are typed columns.
     """)
     return
 
@@ -48,6 +50,7 @@ def _():
         daft,
         get_s3_credentials,
         os,
+        pa,
         time,
     )
 
@@ -125,20 +128,12 @@ def _(mo):
 @app.cell
 def _(daft, df_chunks, df_ingestion):
     # Join on collection_name
-    df_joined = (
-        df_chunks
-            .select("collection_name", "pk", "source", "chunk_number")
-            .join(df_ingestion
-                .select(
-                    daft.col("collection_name").alias("ing_collection_name"),
-                    "status",
-                    "handler_type",
-                    "key"
-                ),
+    df_joined = df_chunks.select("collection_name", "pk", "source", "chunk_number").join(
+        df_ingestion.select(daft.col("collection_name").alias("ing_collection_name"), "status", "handler_type", "key"),
         left_on="collection_name",
         right_on="ing_collection_name",
         how="inner",
-    ))
+    )
 
     df_joined.limit(10).show()
     return (df_joined,)
@@ -175,11 +170,13 @@ def _(daft, df_joined):
 @app.cell
 def _(mo):
     mo.md("""
-    ## Step 3 — Cosine Similarity Search
+    ## Step 3 — Cosine Similarity Search (DataFrame API)
 
     Pick the first chunk's vector as the query vector, then compute
-    cosine similarity against all other chunks to find the most similar
-    ones.  This uses Daft's native `cosine_similarity` expression.
+    cosine similarity against all other chunks using the DataFrame API.
+
+    Note: `daft.lit()` produces a Python-typed literal, so we must cast
+    it to `FixedSizeList[Float32, 2048]` for `cosine_similarity` to work.
     """)
     return
 
@@ -194,7 +191,7 @@ def _(df_chunks):
 
     print(f"Query chunk PK: {query_pk}")
     print(f"Query source: {query_source}")
-    print(f"Vector dimension: {query_vector}")
+    print(f"Vector dimension: {len(query_vector)}")
     return query_pk, query_vector
 
 
@@ -222,7 +219,50 @@ def _(DataType, daft, df_chunks, query_pk, query_vector):
 @app.cell
 def _(mo):
     mo.md("""
-    ## Step 4 — Inspect top similar chunk content
+    ## Step 4 — Cosine Similarity Search (SQL)
+
+    The same search expressed in SQL. We register `query_vector` and
+    `query_pk` as a temp table (`query_ref`) so the SQL query can
+    reference the Python-side vector without any cast — both sides of
+    `cosine_similarity()` are typed columns.
+
+    Daft SQL doesn't support `CROSS JOIN`, so we use a dummy `join_key`
+    to broadcast the query vector to every row via an equality join.
+    """)
+    return
+
+
+@app.cell
+def _(daft, pa, query_pk, query_vector, sess):
+    # Register the query vector as a temp table with the correct Arrow type
+    _fsl_type = pa.list_(pa.float32(), 2048)
+    _query_df = daft.from_pydict(
+        {
+            "query_vec": pa.array([query_vector], type=_fsl_type),
+            "query_pk": [query_pk],
+            "join_key": [1],
+        }
+    )
+    sess.create_temp_table("query_ref", _query_df)
+
+    df_similarity_sql = sess.sql("""
+        SELECT c.pk, c.source, c.collection_name, c.chunk_number,
+               cosine_similarity(c.vector, q.query_vec) AS similarity
+        FROM (SELECT *, 1 AS join_key FROM chunks) c
+        JOIN query_ref q ON c.join_key = q.join_key
+        WHERE c.pk != q.query_pk
+        ORDER BY similarity DESC
+        LIMIT 10
+    """)
+
+    df_similarity_sql.show()
+    return (df_similarity_sql,)
+
+
+@app.cell
+def _(mo):
+    mo.md("""
+    ## Step 5 — Inspect top similar chunk content
     """)
     return
 
@@ -242,11 +282,6 @@ def _(df_similarity):
         print(f"Text preview (first 500 chars):\n{_text[:500] if _text else '(empty)'}")
     else:
         print("No similar chunks found.")
-    return
-
-
-@app.cell
-def _():
     return
 
 
