@@ -83,7 +83,7 @@ def _(
 
     vastdb_catalog = VastDBCatalog(vastdb_config, alias="vast")
 
-    iceberg_catalog = make_shared_iceberg_catalog()
+    iceberg_catalog = make_shared_iceberg_catalog(name="s3_iceberg")
 
     io_config = IOConfig(
         s3=S3Config(

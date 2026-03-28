@@ -98,7 +98,7 @@ def _(IOConfig, S3Config, VastDBCatalog, VastDBConfig, daft, get_s3_credentials,
     )
     vastdb_catalog = VastDBCatalog(config)
 
-    iceberg_catalog = make_shared_iceberg_catalog(name="vast_s3")
+    iceberg_catalog = make_shared_iceberg_catalog(name="s3_iceberg")
 
     io_config = IOConfig(
         s3=S3Config(
@@ -445,17 +445,17 @@ def _(
     iceberg_catalog,
     vastdb_catalog,
 ):
-    for _t in [VASTDB_ORDERS_TABLE, VASTDB_CUSTOMERS_TABLE]:
-        vastdb_catalog.drop_table(_t)
-        print(f"Dropped VastDB: {_t}")
+    # for _t in [VASTDB_ORDERS_TABLE, VASTDB_CUSTOMERS_TABLE]:
+    #     # vastdb_catalog.drop_table(_t)
+    #     print(f"Dropped VastDB: {_t}")
 
-    for _t in [ICEBERG_ENRICHED_TABLE, ICEBERG_PRODUCTS_TABLE]:
-        _fqn = f"{ICEBERG_NAMESPACE}.{_t}"
-        if iceberg_catalog.table_exists(_fqn):
-            iceberg_catalog.drop_table(_fqn)
-            print(f"Dropped Iceberg: {_fqn}")
+    # for _t in [ICEBERG_ENRICHED_TABLE, ICEBERG_PRODUCTS_TABLE]:
+    #     _fqn = f"{ICEBERG_NAMESPACE}.{_t}"
+    #     if iceberg_catalog.table_exists(_fqn):
+    #         iceberg_catalog.drop_table(_fqn)
+    #         print(f"Dropped Iceberg: {_fqn}")
 
-    print("Done.")
+    # print("Done.")
     return
 
 
