@@ -1,6 +1,6 @@
 import marimo  # type: ignore
 
-__generated_with = "0.13.0"
+__generated_with = "0.21.1"
 app = marimo.App(width="medium")
 
 
@@ -10,8 +10,10 @@ def _(mo):
         """
         # Cross-Backend: VastDB + Iceberg + Ray
 
-        Read from VastDB and Iceberg simultaneously, join across backends,
-        aggregate, and write results back — all distributed via Ray.
+        Write a product catalog (200 rows) and a large orders table (10M rows)
+        to **VastDB**, write customers (10K rows) to **Iceberg** (on VastDB S3),
+        then join across both backends and aggregate — all distributed via Ray
+        through a unified session API.
         """
     )
     return
@@ -26,48 +28,35 @@ def _():
 
 @app.cell
 def _():
-    import os
     import time
 
     import daft
     import pyarrow as pa
     from daft.io import IOConfig, S3Config
-    from pyiceberg.schema import Schema as IcebergSchema
-    from pyiceberg.types import DoubleType, LongType, NestedField, StringType
 
-    from helpers import ( # type: ignore
+    from helpers import (  # type: ignore
         configure_daft_runner,
         generate_customers,
         generate_orders,
+        generate_products,
         get_s3_credentials,
         make_shared_iceberg_catalog,
     )
-    from vast_daft import (
-        VastDBCatalog,
-        VastDBConfig,
-        VastDBDataSink,
-        VastDBDataSource,
-    )
+    from vast_daft import VastDBCatalog, VastDBConfig, VastDBDataSink
 
     return (
         IOConfig,
-        IcebergSchema,
         S3Config,
         VastDBCatalog,
         VastDBConfig,
         VastDBDataSink,
-        VastDBDataSource,
         configure_daft_runner,
-        DoubleType,
+        daft,
         generate_customers,
         generate_orders,
+        generate_products,
         get_s3_credentials,
-        LongType,
         make_shared_iceberg_catalog,
-        NestedField,
-        StringType,
-        daft,
-        os,
         pa,
         time,
     )
@@ -80,15 +69,38 @@ def _(configure_daft_runner):
 
 
 @app.cell
-def _(IOConfig, S3Config, VastDBCatalog, VastDBConfig, daft, get_s3_credentials, make_shared_iceberg_catalog, os):
+def _(
+    IOConfig,
+    S3Config,
+    VastDBCatalog,
+    VastDBConfig,
+    daft,
+    generate_products,
+    get_s3_credentials,
+    make_shared_iceberg_catalog,
+):
+    # ---------- constants ----------
+    NUM_PRODUCTS = 200
+    NUM_CUSTOMERS = 10_000
+    NUM_ORDERS = 10_000_000
+    ORDERS_BATCH_SIZE = 1_000_000
+
+    # Pre-generate unique product names so orders reference the same set.
+    PRODUCT_NAMES = generate_products(NUM_PRODUCTS, unique_names=True)["product"]
+
+    VASTDB_ORDERS_TABLE = "__xbackend_orders__"
+    VASTDB_PRODUCTS_TABLE = "__xbackend_products__"
+    ICEBERG_NAMESPACE = "cross_backend_demo"
+    ICEBERG_CUSTOMERS_TABLE = "customers"
+
+    # ---------- credentials ----------
+    ACCESS_KEY, SECRET_KEY = get_s3_credentials()
     ENDPOINT = "http://vippool.ie-dev-pipeline.svc.cluster.local"
     BUCKET = "collections-bucket"
     SCHEMA = "collections-schema"
-    ACCESS_KEY, SECRET_KEY = get_s3_credentials()
 
-    ICEBERG_NAMESPACE = "cross_backend_demo"
-
-    config = VastDBConfig(
+    # ---------- VastDB catalog ----------
+    vastdb_config = VastDBConfig(
         endpoint=ENDPOINT,
         access_key=ACCESS_KEY,
         secret_key=SECRET_KEY,
@@ -96,10 +108,12 @@ def _(IOConfig, S3Config, VastDBCatalog, VastDBConfig, daft, get_s3_credentials,
         schema=SCHEMA,
         ssl_verify=False,
     )
-    vastdb_catalog = VastDBCatalog(config)
+    vastdb_catalog = VastDBCatalog(vastdb_config, alias="vast")
 
+    # ---------- Iceberg catalog ----------
     iceberg_catalog = make_shared_iceberg_catalog(name="s3_iceberg")
 
+    # ---------- IO config for Iceberg writes ----------
     io_config = IOConfig(
         s3=S3Config(
             endpoint_url=ENDPOINT,
@@ -109,36 +123,147 @@ def _(IOConfig, S3Config, VastDBCatalog, VastDBConfig, daft, get_s3_credentials,
             use_ssl=False,
         ),
     )
+
+    # ---------- unified session ----------
+    sess = daft.session()
+    sess.attach_catalog(vastdb_catalog)
+    sess.attach_catalog(iceberg_catalog)
+    sess.set_catalog(vastdb_catalog.name)
+
     return (
-        ACCESS_KEY,
-        BUCKET,
-        ENDPOINT,
+        ICEBERG_CUSTOMERS_TABLE,
         ICEBERG_NAMESPACE,
-        SCHEMA,
-        SECRET_KEY,
-        config,
+        NUM_CUSTOMERS,
+        NUM_ORDERS,
+        NUM_PRODUCTS,
+        ORDERS_BATCH_SIZE,
+        PRODUCT_NAMES,
+        VASTDB_ORDERS_TABLE,
+        VASTDB_PRODUCTS_TABLE,
         iceberg_catalog,
         io_config,
-        vastdb_catalog,
+        sess,
+        vastdb_config,
     )
+
+
+# ---------------------------------------------------------------------------
+# Step 1 — Write product catalog to VastDB (200 rows, 17 columns)
+# ---------------------------------------------------------------------------
 
 
 @app.cell
 def _(mo):
-    NUM_ORDERS = mo.ui.slider(10_000, 500_000, value=100_000, step=10_000, label="Number of orders")
-    NUM_CUSTOMERS = mo.ui.slider(1000, 50_000, value=10_000, step=1000, label="Number of customers")
-    mo.vstack([NUM_ORDERS, NUM_CUSTOMERS])
-    return NUM_CUSTOMERS, NUM_ORDERS
+    mo.md("## Step 1 — Write Product Catalog to VastDB (200 rows, 17 cols)")
+    return
 
 
 @app.cell
-def _(DoubleType, IcebergSchema, LongType, NestedField, StringType, pa):
-    VASTDB_ORDERS_TABLE = "__xbackend_orders__"
-    VASTDB_CUSTOMERS_TABLE = "__xbackend_customers__"
-    ICEBERG_PRODUCTS_TABLE = "product_catalog"
-    ICEBERG_ENRICHED_TABLE = "enriched_orders"
+def _(VASTDB_PRODUCTS_TABLE, VastDBDataSink, daft, generate_products, pa, sess, time, vastdb_config):
+    sess.set_catalog("vast")
+    if sess.has_table(VASTDB_PRODUCTS_TABLE):
+        sess.current_catalog().drop_table(VASTDB_PRODUCTS_TABLE)
 
-    ORDERS_SCHEMA = pa.schema(
+    _t0 = time.perf_counter()
+    _products_schema = pa.schema(
+        [
+            ("product", pa.string()),
+            ("sku", pa.string()),
+            ("category", pa.string()),
+            ("sub_category", pa.string()),
+            ("supplier", pa.string()),
+            ("warehouse", pa.string()),
+            ("color", pa.string()),
+            ("weight_kg", pa.float64()),
+            ("cost_price", pa.float64()),
+            ("retail_price", pa.float64()),
+            ("margin_pct", pa.float64()),
+            ("stock_qty", pa.int64()),
+            ("reorder_level", pa.int64()),
+            ("lead_time_days", pa.int64()),
+            ("rating", pa.float64()),
+            ("review_count", pa.int64()),
+            ("description", pa.string()),
+        ]
+    )
+    df_products = daft.from_pydict(generate_products(200, unique_names=True))
+    _sink = VastDBDataSink(
+        config=vastdb_config,
+        table_name=VASTDB_PRODUCTS_TABLE,
+        table_schema=_products_schema,
+        create_if_missing=True,
+    )
+    df_products.write_sink(_sink).show()
+    print(f"Wrote 200 products (17 cols) in {time.perf_counter() - _t0:.2f}s")
+    return
+
+
+# ---------------------------------------------------------------------------
+# Step 2 — Write customers to Iceberg (10K rows)
+# ---------------------------------------------------------------------------
+
+
+@app.cell
+def _(mo):
+    mo.md("## Step 2 — Write Customers to Iceberg (10K rows)")
+    return
+
+
+@app.cell
+def _(
+    ICEBERG_CUSTOMERS_TABLE,
+    ICEBERG_NAMESPACE,
+    NUM_CUSTOMERS,
+    daft,
+    generate_customers,
+    iceberg_catalog,
+    io_config,
+    time,
+):
+    iceberg_catalog.create_namespace_if_not_exists(ICEBERG_NAMESPACE)
+    _fqn = f"{ICEBERG_NAMESPACE}.{ICEBERG_CUSTOMERS_TABLE}"
+    if iceberg_catalog.table_exists(_fqn):
+        iceberg_catalog.drop_table(_fqn)
+
+    _t0 = time.perf_counter()
+    _df = daft.from_pydict(generate_customers(NUM_CUSTOMERS))
+    _iceberg_table = iceberg_catalog.create_table(_fqn, schema=_df.to_arrow().schema)
+    _df.write_iceberg(_iceberg_table, mode="append", io_config=io_config).show()
+    print(f"Wrote {NUM_CUSTOMERS:,} customers to Iceberg in {time.perf_counter() - _t0:.2f}s")
+    return
+
+
+# ---------------------------------------------------------------------------
+# Step 3 — Write orders to VastDB (10M rows, batched)
+# ---------------------------------------------------------------------------
+
+
+@app.cell
+def _(mo):
+    mo.md("## Step 3 — Write Orders to VastDB (10M rows, batched)")
+    return
+
+
+@app.cell
+def _(
+    NUM_CUSTOMERS,
+    NUM_ORDERS,
+    ORDERS_BATCH_SIZE,
+    PRODUCT_NAMES,
+    VASTDB_ORDERS_TABLE,
+    VastDBDataSink,
+    daft,
+    generate_orders,
+    pa,
+    sess,
+    time,
+    vastdb_config,
+):
+    sess.set_catalog("vast")
+    if sess.has_table(VASTDB_ORDERS_TABLE):
+        sess.current_catalog().drop_table(VASTDB_ORDERS_TABLE)
+
+    _orders_schema = pa.schema(
         [
             ("order_id", pa.int64()),
             ("customer_id", pa.int64()),
@@ -148,188 +273,85 @@ def _(DoubleType, IcebergSchema, LongType, NestedField, StringType, pa):
         ]
     )
 
-    CUSTOMERS_SCHEMA = pa.schema(
-        [
-            ("customer_id", pa.int64()),
-            ("name", pa.string()),
-            ("tier", pa.string()),
-        ]
-    )
-
-    ICEBERG_PRODUCTS_SCHEMA = IcebergSchema(
-        NestedField(field_id=1, name="product", field_type=StringType(), required=True),
-        NestedField(field_id=2, name="category", field_type=StringType(), required=True),
-        NestedField(field_id=3, name="weight_kg", field_type=DoubleType(), required=False),
-        NestedField(field_id=4, name="cost_price", field_type=DoubleType(), required=False),
-    )
-
-    ICEBERG_ENRICHED_SCHEMA = IcebergSchema(
-        NestedField(field_id=1, name="order_id", field_type=LongType(), required=True),
-        NestedField(field_id=2, name="customer_id", field_type=LongType(), required=True),
-        NestedField(field_id=3, name="product", field_type=StringType(), required=True),
-        NestedField(field_id=4, name="category", field_type=StringType(), required=True),
-        NestedField(field_id=5, name="amount", field_type=DoubleType(), required=False),
-        NestedField(field_id=6, name="cost_price", field_type=DoubleType(), required=False),
-        NestedField(field_id=7, name="order_date", field_type=StringType(), required=False),
-        NestedField(field_id=8, name="name", field_type=StringType(), required=False),
-        NestedField(field_id=9, name="tier", field_type=StringType(), required=False),
-    )
-    return (
-        CUSTOMERS_SCHEMA,
-        ICEBERG_ENRICHED_SCHEMA,
-        ICEBERG_ENRICHED_TABLE,
-        ICEBERG_PRODUCTS_SCHEMA,
-        ICEBERG_PRODUCTS_TABLE,
-        ORDERS_SCHEMA,
-        VASTDB_CUSTOMERS_TABLE,
-        VASTDB_ORDERS_TABLE,
-    )
-
-
-@app.cell
-def _(mo):
-    mo.md("## Step 1 — Generate & Write Orders to VastDB")
-    return
-
-
-@app.cell
-def _(
-    NUM_CUSTOMERS,
-    NUM_ORDERS,
-    ORDERS_SCHEMA,
-    VASTDB_ORDERS_TABLE,
-    VastDBDataSink,
-    config,
-    daft,
-    generate_orders,
-    time,
-    vastdb_catalog,
-):
-    _n = NUM_ORDERS.value
-
-    vastdb_catalog.drop_table(VASTDB_ORDERS_TABLE)
-
     _t0 = time.perf_counter()
-    df_orders = daft.from_pydict(generate_orders(_n, NUM_CUSTOMERS.value))
-    _sink = VastDBDataSink(
-        config=config, table_name=VASTDB_ORDERS_TABLE, table_schema=ORDERS_SCHEMA, create_if_missing=True
-    )
-    df_orders.write_sink(_sink).show()
-    print(f"Wrote {_n:,} orders in {time.perf_counter() - _t0:.2f}s")
-    return (df_orders,)
+    _total_written = 0
+    for _batch_start in range(0, NUM_ORDERS, ORDERS_BATCH_SIZE):
+        _batch_size = min(ORDERS_BATCH_SIZE, NUM_ORDERS - _batch_start)
+        _batch = generate_orders(
+            _batch_size,
+            NUM_CUSTOMERS,
+            seed=123 + _batch_start,
+            start_id=_batch_start + 1,
+            products=PRODUCT_NAMES,
+        )
+        _df = daft.from_pydict(_batch)
+        _sink = VastDBDataSink(
+            config=vastdb_config,
+            table_name=VASTDB_ORDERS_TABLE,
+            table_schema=_orders_schema,
+            create_if_missing=True,
+        )
+        _df.write_sink(_sink).show()
+        _total_written += _batch_size
+        print(f"  batch {_total_written:,}/{NUM_ORDERS:,}")
+
+    print(f"Wrote {NUM_ORDERS:,} orders in {time.perf_counter() - _t0:.2f}s")
+    return
+
+
+# ---------------------------------------------------------------------------
+# Step 4 — Read back from both backends via the session
+# ---------------------------------------------------------------------------
 
 
 @app.cell
 def _(mo):
-    mo.md("## Step 2 — Generate & Write Customers to VastDB")
+    mo.md("## Step 4 — Read Back via Session API")
     return
 
 
 @app.cell
-def _(
-    CUSTOMERS_SCHEMA,
-    NUM_CUSTOMERS,
-    VASTDB_CUSTOMERS_TABLE,
-    VastDBDataSink,
-    config,
-    daft,
-    generate_customers,
-    time,
-    vastdb_catalog,
-):
-    _n = NUM_CUSTOMERS.value
+def _(ICEBERG_CUSTOMERS_TABLE, ICEBERG_NAMESPACE, VASTDB_ORDERS_TABLE, VASTDB_PRODUCTS_TABLE, sess):
+    sess.set_catalog("vast")
+    df_orders_read = sess.read_table(VASTDB_ORDERS_TABLE)
+    df_products_read = sess.read_table(VASTDB_PRODUCTS_TABLE)
 
-    vastdb_catalog.drop_table(VASTDB_CUSTOMERS_TABLE)
+    sess.set_catalog("s3_iceberg")
+    df_customers_read = sess.read_table(f"{ICEBERG_NAMESPACE}.{ICEBERG_CUSTOMERS_TABLE}")
 
-    _t0 = time.perf_counter()
-    df_customers = daft.from_pydict(generate_customers(_n))
-    _sink = VastDBDataSink(
-        config=config, table_name=VASTDB_CUSTOMERS_TABLE, table_schema=CUSTOMERS_SCHEMA, create_if_missing=True
-    )
-    df_customers.write_sink(_sink).show()
-    print(f"Wrote {_n:,} customers in {time.perf_counter() - _t0:.2f}s")
-    return (df_customers,)
+    print("Loaded: orders (VastDB, 10M), products (VastDB, 200), customers (Iceberg, 10K)")
+    df_products_read.limit(5).show()
+    return df_customers_read, df_orders_read, df_products_read
+
+
+@app.cell
+def _(daft, df_customers_read, df_orders_read, df_products_read, mo):
+    _dims = {
+        "orders (VastDB)": (
+            df_orders_read.count().collect().to_pydict()["count"][0],
+            len(df_orders_read.schema().column_names()),
+        ),
+        "products (VastDB)": (
+            df_products_read.count().collect().to_pydict()["count"][0],
+            len(df_products_read.schema().column_names()),
+        ),
+        "customers (Iceberg)": (
+            df_customers_read.count().collect().to_pydict()["count"][0],
+            len(df_customers_read.schema().column_names()),
+        ),
+    }
+    _rows = [{"Table": k, "Rows": f"{v[0]:,}", "Columns": v[1]} for k, v in _dims.items()]
+    mo.vstack([mo.md("### Table Dimensions"), mo.ui.table(_rows, selection=None)])
+
+
+# ---------------------------------------------------------------------------
+# Step 5 — Cross-backend join: VastDB orders × VastDB products
+# ---------------------------------------------------------------------------
 
 
 @app.cell
 def _(mo):
-    mo.md("## Step 3 — Write Product Catalog to Iceberg")
-    return
-
-
-@app.cell
-def _(ICEBERG_NAMESPACE, ICEBERG_PRODUCTS_SCHEMA, ICEBERG_PRODUCTS_TABLE, daft, iceberg_catalog, io_config, time):
-    iceberg_catalog.create_namespace_if_not_exists(ICEBERG_NAMESPACE)
-    _fqn = f"{ICEBERG_NAMESPACE}.{ICEBERG_PRODUCTS_TABLE}"
-    if iceberg_catalog.table_exists(_fqn):
-        iceberg_catalog.drop_table(_fqn)
-
-    _t0 = time.perf_counter()
-    _iceberg_table = iceberg_catalog.create_table(_fqn, schema=ICEBERG_PRODUCTS_SCHEMA)
-    df_products = daft.from_pydict(
-        {
-            "product": [
-                "Widget A",
-                "Widget B",
-                "Gadget X",
-                "Gadget Y",
-                "Thingamajig",
-                "Doohickey",
-                "Contraption Z",
-                "Module Pro",
-                "Sensor Lite",
-                "Adapter Max",
-            ],
-            "category": [
-                "Widgets",
-                "Widgets",
-                "Gadgets",
-                "Gadgets",
-                "Misc",
-                "Misc",
-                "Contraptions",
-                "Modules",
-                "Sensors",
-                "Adapters",
-            ],
-            "weight_kg": [0.5, 0.7, 1.2, 1.5, 0.3, 0.2, 2.1, 0.8, 0.1, 0.4],
-            "cost_price": [15.0, 20.0, 45.0, 55.0, 8.0, 5.0, 80.0, 35.0, 12.0, 18.0],
-        }
-    )
-    df_products.write_iceberg(_iceberg_table, mode="append", io_config=io_config).show()
-    print(f"Wrote 10 products to Iceberg in {time.perf_counter() - _t0:.2f}s")
-    return (df_products,)
-
-
-@app.cell
-def _(mo):
-    mo.md("## Step 4 — Read Back from Both Backends")
-    return
-
-
-@app.cell
-def _(CUSTOMERS_SCHEMA, ORDERS_SCHEMA, VASTDB_CUSTOMERS_TABLE, VASTDB_ORDERS_TABLE, VastDBDataSource, config):
-    df_orders_read = VastDBDataSource(
-        config=config, table_name=VASTDB_ORDERS_TABLE, table_schema=ORDERS_SCHEMA, num_splits=4
-    ).read()
-    df_customers_read = VastDBDataSource(
-        config=config, table_name=VASTDB_CUSTOMERS_TABLE, table_schema=CUSTOMERS_SCHEMA, num_splits=4
-    ).read()
-    print("Orders and customers read (lazy, 4 splits each)")
-    return df_customers_read, df_orders_read
-
-
-@app.cell
-def _(ICEBERG_NAMESPACE, ICEBERG_PRODUCTS_TABLE, daft, iceberg_catalog, io_config):
-    _iceberg_table = iceberg_catalog.load_table(f"{ICEBERG_NAMESPACE}.{ICEBERG_PRODUCTS_TABLE}")
-    df_products_read = daft.read_iceberg(_iceberg_table, io_config=io_config)
-    df_products_read.show()
-    return (df_products_read,)
-
-
-@app.cell
-def _(mo):
-    mo.md("## Step 5 — Cross-Backend Join: VastDB Orders x Iceberg Products")
+    mo.md("## Step 5 — Join: Orders × Products (both VastDB)")
     return
 
 
@@ -337,16 +359,30 @@ def _(mo):
 def _(df_orders_read, df_products_read, time):
     _t0 = time.perf_counter()
     df_enriched = df_orders_read.join(df_products_read, on="product", how="inner").select(
-        "order_id", "customer_id", "product", "category", "amount", "cost_price", "order_date"
+        "order_id",
+        "customer_id",
+        "product",
+        "category",
+        "amount",
+        "cost_price",
+        "retail_price",
+        "margin_pct",
+        "warehouse",
+        "order_date",
     )
     df_enriched.limit(5).show()
-    print(f"Cross-backend join in {time.perf_counter() - _t0:.2f}s")
+    print(f"Orders × Products join in {time.perf_counter() - _t0:.2f}s")
     return (df_enriched,)
+
+
+# ---------------------------------------------------------------------------
+# Step 6 — Three-way join: + Iceberg customers
+# ---------------------------------------------------------------------------
 
 
 @app.cell
 def _(mo):
-    mo.md("## Step 6 — Three-Way Join: + VastDB Customers")
+    mo.md("## Step 6 — Three-Way Join: + Customers (Iceberg)")
     return
 
 
@@ -354,16 +390,31 @@ def _(mo):
 def _(df_customers_read, df_enriched, time):
     _t0 = time.perf_counter()
     df_full = df_enriched.join(df_customers_read, on="customer_id", how="inner").select(
-        "order_id", "customer_id", "product", "category", "amount", "cost_price", "order_date", "name", "tier"
+        "order_id",
+        "customer_id",
+        "name",
+        "tier",
+        "product",
+        "category",
+        "amount",
+        "cost_price",
+        "margin_pct",
+        "warehouse",
+        "order_date",
     )
     df_full.limit(5).show()
     print(f"Three-way join in {time.perf_counter() - _t0:.2f}s")
     return (df_full,)
 
 
+# ---------------------------------------------------------------------------
+# Step 7 — Aggregations
+# ---------------------------------------------------------------------------
+
+
 @app.cell
 def _(mo):
-    mo.md("## Step 7 — Aggregations on Cross-Backend Data")
+    mo.md("## Step 7 — Aggregations")
     return
 
 
@@ -382,7 +433,7 @@ def _(daft, df_full, time):
     )
     df_margin.show()
     print(f"Margin by category in {time.perf_counter() - _t0:.2f}s")
-    return (df_margin,)
+    return
 
 
 @app.cell
@@ -399,62 +450,43 @@ def _(daft, df_full, time):
         .limit(10)
     )
     df_tier_cat.show()
-    print(f"Margin by tier x category in {time.perf_counter() - _t0:.2f}s")
-    return (df_tier_cat,)
+    print(f"Margin by tier × category in {time.perf_counter() - _t0:.2f}s")
+    return
+
+
+# ---------------------------------------------------------------------------
+# Cleanup (commented out — tables persist for catalog explorer)
+# ---------------------------------------------------------------------------
 
 
 @app.cell
 def _(mo):
-    mo.md("## Step 8 — Write Enriched Result to Iceberg")
+    mo.md(
+        """
+        ## Cleanup
+
+        Tables are intentionally **kept** so the catalog explorer notebook
+        can browse them.  Uncomment the cell below to drop everything.
+        """
+    )
     return
 
 
 @app.cell
-def _(
-    ICEBERG_ENRICHED_SCHEMA, ICEBERG_ENRICHED_TABLE, ICEBERG_NAMESPACE, daft, df_full, iceberg_catalog, io_config, time
-):
-    _fqn = f"{ICEBERG_NAMESPACE}.{ICEBERG_ENRICHED_TABLE}"
-    if iceberg_catalog.table_exists(_fqn):
-        iceberg_catalog.drop_table(_fqn)
-
-    _t0 = time.perf_counter()
-    _iceberg_enriched = iceberg_catalog.create_table(_fqn, schema=ICEBERG_ENRICHED_SCHEMA)
-    df_full.write_iceberg(_iceberg_enriched, mode="append", io_config=io_config).show()
-
-    _iceberg_enriched = iceberg_catalog.load_table(_fqn)
-    _df_verify = daft.read_iceberg(_iceberg_enriched, io_config=io_config)
-    _count = _df_verify.count().collect().to_pydict()["count"][0]
-    print(f"Wrote {_count:,} enriched rows to Iceberg in {time.perf_counter() - _t0:.2f}s")
-    _df_verify.limit(5).show()
-    return
-
-
-@app.cell
-def _(mo):
-    mo.md("## Cleanup")
-    return
-
-
-@app.cell
-def _(
-    ICEBERG_ENRICHED_TABLE,
-    ICEBERG_NAMESPACE,
-    ICEBERG_PRODUCTS_TABLE,
-    VASTDB_CUSTOMERS_TABLE,
-    VASTDB_ORDERS_TABLE,
-    iceberg_catalog,
-    vastdb_catalog,
-):
-    # for _t in [VASTDB_ORDERS_TABLE, VASTDB_CUSTOMERS_TABLE]:
-    #     # vastdb_catalog.drop_table(_t)
-    #     print(f"Dropped VastDB: {_t}")
-
-    # for _t in [ICEBERG_ENRICHED_TABLE, ICEBERG_PRODUCTS_TABLE]:
-    #     _fqn = f"{ICEBERG_NAMESPACE}.{_t}"
-    #     if iceberg_catalog.table_exists(_fqn):
-    #         iceberg_catalog.drop_table(_fqn)
-    #         print(f"Dropped Iceberg: {_fqn}")
-
+def _():
+    # Uncomment to clean up:
+    #
+    # sess.set_catalog("vast")
+    # for t in [VASTDB_ORDERS_TABLE, VASTDB_PRODUCTS_TABLE]:
+    #     if sess.has_table(t):
+    #         sess.current_catalog().drop_table(t)
+    #         print(f"Dropped VastDB: {t}")
+    #
+    # _fqn = f"{ICEBERG_NAMESPACE}.{ICEBERG_CUSTOMERS_TABLE}"
+    # if iceberg_catalog.table_exists(_fqn):
+    #     iceberg_catalog.drop_table(_fqn)
+    #     print(f"Dropped Iceberg: {_fqn}")
+    #
     # print("Done.")
     return
 

@@ -92,6 +92,104 @@ def generate_orders(
     }
 
 
+DEFAULT_CATEGORIES: dict[str, str] = {
+    "Widget A": "Widgets",
+    "Widget B": "Widgets",
+    "Gadget X": "Gadgets",
+    "Gadget Y": "Gadgets",
+    "Thingamajig": "Misc",
+    "Doohickey": "Misc",
+    "Contraption Z": "Contraptions",
+    "Module Pro": "Modules",
+    "Sensor Lite": "Sensors",
+    "Adapter Max": "Adapters",
+}
+
+DEFAULT_WAREHOUSES: list[str] = [
+    "US-East",
+    "US-West",
+    "EU-Central",
+    "EU-North",
+    "APAC-Tokyo",
+    "APAC-Sydney",
+]
+
+DEFAULT_SUPPLIERS: list[str] = [
+    "Acme Corp",
+    "GlobalParts Inc",
+    "MegaSupply Co",
+    "PrimeSources Ltd",
+    "Atlas Manufacturing",
+    "Vertex Components",
+    "CoreTech Supply",
+]
+
+DEFAULT_COLORS: list[str] = [
+    "Red",
+    "Blue",
+    "Green",
+    "Black",
+    "White",
+    "Silver",
+    "Gold",
+]
+
+
+def generate_products(
+    count: int,
+    *,
+    seed: int = 777,
+    products: list[str] | None = None,
+    categories: dict[str, str] | None = None,
+    unique_names: bool = False,
+) -> dict[str, list[int] | list[float] | list[str]]:
+    """Generate a wide product-catalog table with many columns.
+
+    When *unique_names* is ``True`` each row gets a distinct product name
+    (e.g. ``Widget A-001``).  The generated names still start with a base
+    product so that ``generate_orders`` output can reference the same names
+    when *products* is passed explicitly.
+
+    Returns a dict suitable for ``daft.from_pydict()`` with columns:
+    product, sku, category, sub_category, supplier, warehouse,
+    color, weight_kg, cost_price, retail_price, margin_pct,
+    stock_qty, reorder_level, lead_time_days, rating, review_count,
+    description
+    """
+    rng = random.Random(seed)
+    base_products = products or DEFAULT_PRODUCTS
+    cat_map = categories or DEFAULT_CATEGORIES
+    cat_list = list(set(cat_map.values()))
+
+    if unique_names:
+        product_names = [f"{base_products[i % len(base_products)]}-{i + 1:04d}" for i in range(count)]
+    else:
+        product_names = [rng.choice(base_products) for _ in range(count)]
+
+    return {
+        "product": product_names,
+        "sku": [f"SKU-{rng.randint(100000, 999999)}" for _ in range(count)],
+        "category": [cat_map.get(p.split("-")[0], rng.choice(cat_list)) for p in product_names],
+        "sub_category": [f"sub_{rng.randint(1, 20):02d}" for _ in range(count)],
+        "supplier": [rng.choice(DEFAULT_SUPPLIERS) for _ in range(count)],
+        "warehouse": [rng.choice(DEFAULT_WAREHOUSES) for _ in range(count)],
+        "color": [rng.choice(DEFAULT_COLORS) for _ in range(count)],
+        "weight_kg": [round(rng.uniform(0.05, 25.0), 2) for _ in range(count)],
+        "cost_price": [round(rng.uniform(1.0, 200.0), 2) for _ in range(count)],
+        "retail_price": [round(rng.uniform(5.0, 500.0), 2) for _ in range(count)],
+        "margin_pct": [round(rng.uniform(0.05, 0.65), 4) for _ in range(count)],
+        "stock_qty": [rng.randint(0, 10000) for _ in range(count)],
+        "reorder_level": [rng.randint(10, 500) for _ in range(count)],
+        "lead_time_days": [rng.randint(1, 90) for _ in range(count)],
+        "rating": [round(rng.uniform(1.0, 5.0), 1) for _ in range(count)],
+        "review_count": [rng.randint(0, 5000) for _ in range(count)],
+        "description": [
+            f"Product {p} — high quality {rng.choice(DEFAULT_COLORS).lower()} unit from {rng.choice(DEFAULT_SUPPLIERS)}"
+            for p in product_names
+        ],
+    }
+
+
 def get_shared_catalog_db_path() -> str:
     """Return the path for the shared SQLite Iceberg catalog DB.
 
