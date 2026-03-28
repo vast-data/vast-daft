@@ -31,7 +31,6 @@ def _():
     import os
 
     import daft
-    import pandas as pd
     from daft.io import IOConfig, S3Config
 
     from helpers import configure_daft_runner, get_s3_credentials, make_shared_iceberg_catalog  # type: ignore
@@ -47,7 +46,6 @@ def _():
         get_s3_credentials,
         make_shared_iceberg_catalog,
         os,
-        pd,
     )
 
 
@@ -120,34 +118,42 @@ def _(mo, sess):
 
 
 @app.cell
-def _(catalog_selector, mo, pd, sess):
+def _(catalog_selector, mo, sess):
     table_rows = []
-    table_df = pd.DataFrame()
     if catalog_selector.value:
         sess.set_catalog(catalog_selector.value)
         table_rows = sess.current_catalog().list_tables()
-        table_df = pd.DataFrame(table_rows)
 
     tables_table = mo.ui.radio(options=list(map(str, table_rows)))
-    mo.vstack([mo.md(f"### **{sess.current_catalog().name}** Tables"), tables_table])
+
+    _output = (
+        mo.vstack([mo.md(f"### **{sess.current_catalog().name}** Tables"), tables_table])
+        if table_rows
+        else mo.md("_Select a catalog above to list its tables._")
+    )
+    _output
     return (tables_table,)
 
 
 @app.cell
-def _(sess, tables_table):
-    schema = None
+def _(mo, sess, tables_table):
+    _output = None
     if tables_table.value:
-        schema = sess.current_catalog().read_table(identifier=tables_table.value).schema()
-    schema
+        _output = sess.current_catalog().read_table(identifier=tables_table.value).schema()
+    else:
+        _output = mo.md("_Select a table above to view its schema._")
+    _output
     return
 
 
 @app.cell
-def _(sess, tables_table):
-    snippet = None
+def _(mo, sess, tables_table):
+    _output = None
     if tables_table.value:
-        snippet = sess.current_catalog().read_table(identifier=tables_table.value).limit(25).to_pandas()
-    snippet
+        _output = sess.current_catalog().read_table(identifier=tables_table.value).limit(25).to_pandas()
+    else:
+        _output = mo.md("_Select a table above to preview its data._")
+    _output
     return
 
 
