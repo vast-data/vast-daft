@@ -137,22 +137,21 @@ def _(catalog_selector, mo, sess):
 
 @app.cell
 def _(mo, sess, tables_table):
-    _output = None
+    _output = mo.md("_Select a table above to view its schema._")
     if tables_table.value:
-        _output = sess.current_catalog().read_table(identifier=tables_table.value).schema()
-    else:
-        _output = mo.md("_Select a table above to view its schema._")
-    _output
-    return
-
-
-@app.cell
-def _(mo, sess, tables_table):
-    _output = None
-    if tables_table.value:
-        _output = sess.current_catalog().read_table(identifier=tables_table.value).limit(25).to_pandas()
-    else:
-        _output = mo.md("_Select a table above to preview its data._")
+        _tbl = sess.current_catalog().read_table(identifier=tables_table.value)
+        _schema = _tbl.schema()
+        _schema_rows = [
+            {"Column": name, "Type": str(dtype)}
+            for name, dtype in zip(_schema.column_names(), _schema.to_pyarrow_schema().types)
+        ]
+        _data = _tbl.limit(25).to_pandas()
+        _output = mo.ui.tabs(
+            {
+                "Data": _data,
+                "Schema": mo.ui.table(_schema_rows, selection=None, page_size=len(_schema_rows)),
+            }
+        )
     _output
     return
 
