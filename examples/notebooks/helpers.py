@@ -126,13 +126,22 @@ def generate_orders(
     months = rng.integers(1, 13, size=count)
     days = rng.integers(1, 29, size=count)
 
-    return pa.table({
-        "order_id": pa.array(order_ids),
-        "customer_id": pa.array(customer_ids),
-        "product": pa.array([product_values[i] for i in product_idx], type=pa.string()),
-        "amount": pa.array(amounts),
-        "order_date": pa.array([f"2025-{m:02d}-{d:02d}" for m, d in zip(months, days)], type=pa.string()),
-    })
+    product_arr = np.array(product_values)
+    product_names = product_arr[product_idx]
+
+    months_str = np.char.zfill(months.astype(str), 2)
+    days_str = np.char.zfill(days.astype(str), 2)
+    order_dates = np.char.add(np.char.add("2025-", months_str), np.char.add("-", days_str))
+
+    return pa.table(
+        {
+            "order_id": pa.array(order_ids),
+            "customer_id": pa.array(customer_ids),
+            "product": pa.array(product_names, type=pa.string()),
+            "amount": pa.array(amounts),
+            "order_date": pa.array(order_dates, type=pa.string()),
+        }
+    )
 
 
 DEFAULT_CATEGORIES: dict[str, str] = {
@@ -226,34 +235,36 @@ def generate_products(
     desc_color_idx = rng.integers(0, len(DEFAULT_COLORS), size=count)
     desc_supplier_idx = rng.integers(0, len(DEFAULT_SUPPLIERS), size=count)
 
-    return pa.table({
-        "product": pa.array(product_names, type=pa.string()),
-        "sku": pa.array([f"SKU-{n}" for n in sku_nums], type=pa.string()),
-        "category": pa.array(
-            [cat_map.get(p.split("-")[0], cat_list[0]) for p in product_names],
-            type=pa.string(),
-        ),
-        "sub_category": pa.array([f"sub_{n:02d}" for n in sub_cat_nums], type=pa.string()),
-        "supplier": pa.array([DEFAULT_SUPPLIERS[i] for i in supplier_idx], type=pa.string()),
-        "warehouse": pa.array([DEFAULT_WAREHOUSES[i] for i in warehouse_idx], type=pa.string()),
-        "color": pa.array([DEFAULT_COLORS[i] for i in color_idx], type=pa.string()),
-        "weight_kg": pa.array(weight_kg),
-        "cost_price": pa.array(cost_price),
-        "retail_price": pa.array(retail_price),
-        "margin_pct": pa.array(margin_pct),
-        "stock_qty": pa.array(stock_qty),
-        "reorder_level": pa.array(reorder_level),
-        "lead_time_days": pa.array(lead_time_days),
-        "rating": pa.array(rating),
-        "review_count": pa.array(review_count),
-        "description": pa.array(
-            [
-                f"Product {p} — high quality {DEFAULT_COLORS[ci].lower()} unit from {DEFAULT_SUPPLIERS[si]}"
-                for p, ci, si in zip(product_names, desc_color_idx, desc_supplier_idx)
-            ],
-            type=pa.string(),
-        ),
-    })
+    return pa.table(
+        {
+            "product": pa.array(product_names, type=pa.string()),
+            "sku": pa.array([f"SKU-{n}" for n in sku_nums], type=pa.string()),
+            "category": pa.array(
+                [cat_map.get(p.split("-")[0], cat_list[0]) for p in product_names],
+                type=pa.string(),
+            ),
+            "sub_category": pa.array([f"sub_{n:02d}" for n in sub_cat_nums], type=pa.string()),
+            "supplier": pa.array([DEFAULT_SUPPLIERS[i] for i in supplier_idx], type=pa.string()),
+            "warehouse": pa.array([DEFAULT_WAREHOUSES[i] for i in warehouse_idx], type=pa.string()),
+            "color": pa.array([DEFAULT_COLORS[i] for i in color_idx], type=pa.string()),
+            "weight_kg": pa.array(weight_kg),
+            "cost_price": pa.array(cost_price),
+            "retail_price": pa.array(retail_price),
+            "margin_pct": pa.array(margin_pct),
+            "stock_qty": pa.array(stock_qty),
+            "reorder_level": pa.array(reorder_level),
+            "lead_time_days": pa.array(lead_time_days),
+            "rating": pa.array(rating),
+            "review_count": pa.array(review_count),
+            "description": pa.array(
+                [
+                    f"Product {p} — high quality {DEFAULT_COLORS[ci].lower()} unit from {DEFAULT_SUPPLIERS[si]}"
+                    for p, ci, si in zip(product_names, desc_color_idx, desc_supplier_idx)
+                ],
+                type=pa.string(),
+            ),
+        }
+    )
 
 
 def get_shared_catalog_db_path() -> str:
