@@ -13,7 +13,7 @@ def _(mo):
         How Daft integrates with VastDB and distributes work across Ray workers.
 
         Covers: object model, split estimation, read (select / filter / agg / join),
-        count pushdown, filter pushdown, and writes — all in the Ray context.
+        count pushdown, filter pushdown, writes, and Ray fault tolerance — all in the Ray context.
         """
     )
     return
@@ -140,7 +140,7 @@ def _(mo):
         │                            │       │ no data scan            │
         │  can_absorb_filter()       │ True  │ WHERE pushed to VastDB  │
         │  can_absorb_limit()        │ True  │ LIMIT pushed to VastDB  │
-        │  can_absorb_select()       │ False │ see note below          │
+        │  can_absorb_select()       │ False │ bug workaround #6500    │
         └──────────────────────────────────────────────────────────────┘
         ```
 
@@ -154,11 +154,12 @@ def _(mo):
         ```
 
         **Why `can_absorb_select() = False`?**
-        If enabled, Daft may push a partial column set to the scan (e.g. only
-        `["product_id"]` for a join), omitting columns that downstream operators need.
-        This triggers schema assertion failures inside Daft's hash-join.
-        With it disabled, VastDB always returns all columns; Daft projects above the
-        scan node. Safe — at the cost of extra data over the wire.
+        Workaround for a Daft bug ([#6500](https://github.com/Eventual-Inc/Daft/issues/6500)).
+        When enabled, Daft may push a partial column set to the scan (e.g. only
+        `["product_id"]` for a join), omitting columns that downstream operators need,
+        triggering schema assertion failures inside Daft's hash-join.
+        Disabled until the bug is fixed upstream — VastDB returns all columns and
+        Daft projects above the scan node. Cost: extra data over the wire.
         """
     )
     return
@@ -419,11 +420,15 @@ def _(mo):
 
         WHY can_absorb_select() = False matters here:
           ┌────────────────────────────────────────────────────────────────────┐
+          │  Daft bug #6500: partial column pushdown into a scan that feeds    │
+          │  a hash-join causes schema assertion failures.                     │
+          │                                                                    │
           │  If True:  Daft might push ["product_id"] to the orders scan       │
           │            → other columns (order_total, status …) missing         │
-          │            → HashJoin schema assertion failure                     │
+          │            → HashJoin schema assertion failure  ← bug              │
           │  If False: orders scan returns ALL columns every time              │
           │            → Daft projects above the join node — always safe       │
+          │            → cost: extra columns over the wire until bug is fixed  │
           └────────────────────────────────────────────────────────────────────┘
         ```
         """
@@ -452,6 +457,58 @@ def _(mo):
           OLD (interactive per split):  1 + 4×3 = 13 RPCs
           NEW (non-interactive):        1 + 4×1 =  5 RPCs   ← 62% fewer
         ```
+        """
+    )
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        r"""
+        ## Fault tolerance on Ray
+
+        Running Daft on Ray provides partition-level resilience automatically.
+
+        **What you get for free:**
+
+        ```
+        ┌──────────────────────────────────┬──────────────────────────────────────────┐
+        │  Capability                      │  What happens                            │
+        ├──────────────────────────────────┼──────────────────────────────────────────┤
+        │  Task retry on worker crash      │  Ray retries up to 3× on system failure  │
+        │                                  │  (node death, OOMKill)                   │
+        │  Worker node failure recovery    │  Lost partitions rescheduled on          │
+        │                                  │  surviving nodes automatically           │
+        │  Lineage reconstruction          │  Lost objects rebuilt by re-running the  │
+        │                                  │  producing task (reads must be idempotent)│
+        │  OOMKill recovery                │  Ray detects and retries OOM-killed work │
+        │  Object spilling                 │  Datasets > aggregate RAM spill to disk  │
+        └──────────────────────────────────┴──────────────────────────────────────────┘
+        ```
+
+        **What you do NOT get:**
+
+        ```
+        ✗  No job-level checkpointing
+              A job that fails at 90% restarts from scratch.
+
+        ✗  Head node is a SPOF by default
+              Requires KubeRay + HA Redis for head-node fault tolerance.
+
+        ✗  No exactly-once guarantees
+              Retried tasks may produce duplicate writes unless the sink is idempotent.
+
+        ✗  No stateful streaming / incremental ingestion
+              Daft is a batch engine. For CDC or streaming, use a dedicated tool.
+
+        ✗  No automatic actor state recovery
+              Swordfish workers on Ray have no built-in checkpoint of in-progress state;
+              a failed task restarts the partition scan from the beginning.
+        ```
+
+        For production long-running pipelines, pair with an external orchestrator
+        (Dagster, Airflow, Prefect) and ensure write operations are idempotent.
         """
     )
     return

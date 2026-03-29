@@ -165,6 +165,26 @@ make clean      # Remove everything including namespace
 
 See [RAY_DEPLOYMENT.md](RAY_DEPLOYMENT.md) for detailed architecture and troubleshooting.
 
+### Fault tolerance on Ray
+
+Running Daft on Ray provides partition-level resilience automatically:
+
+| Capability | Notes |
+|---|---|
+| Task retry on worker crash | Ray retries failed tasks up to 3× on system failure (node death, OOMKill) |
+| Worker node failure recovery | Lost partitions are rescheduled on surviving nodes |
+| Lineage-based reconstruction | Lost objects are rebuilt by re-running the producing task (assumes idempotent reads) |
+| OOMKill recovery | Ray detects OOM-killed workers and retries the affected work |
+| Object spilling | Datasets larger than aggregate cluster RAM spill to disk automatically |
+
+**Limitations** — what Ray does _not_ provide:
+
+- **No job-level checkpointing** — a job that fails after 90% completion restarts from scratch
+- **Head node is a SPOF** by default; requires KubeRay + HA Redis for head-node fault tolerance
+- **No exactly-once guarantees** — retried tasks may produce duplicate writes unless the sink is idempotent
+- **No stateful streaming** — Daft is a batch engine; incremental/streaming ingestion is not supported
+- For long-running pipelines where partial failure recovery is critical, pair with an external orchestrator (Dagster, Airflow, Prefect)
+
 ## Architecture
 
 ### End-to-end flow on Ray
@@ -245,7 +265,7 @@ to unlock optimisation hooks unavailable through the shim:
 | `supports_count_pushdown()` | `True` | `df.count()` = 1 metadata RPC, no data scan |
 | `can_absorb_filter()` | `True` | WHERE predicate pushed to VastDB server |
 | `can_absorb_limit()` | `True` | LIMIT pushed to VastDB server |
-| `can_absorb_select()` | `False` | Column projection disabled to prevent join schema failures |
+| `can_absorb_select()` | `False` | Column projection disabled — workaround for a Daft bug ([#6500](https://github.com/Eventual-Inc/Daft/issues/6500)) where partial column pushdown triggers schema assertion failures in hash-join; all columns are fetched and Daft projects above the scan node |
 
 ### Split estimation
 
