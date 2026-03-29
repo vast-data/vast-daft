@@ -66,10 +66,10 @@ def _(configure_daft_runner):
 
 
 @app.cell
-def _(VastDBCatalog, VastDBConfig, get_s3_credentials):
-    ENDPOINT = "http://vippool.ie-dev-pipeline.svc.cluster.local"
-    BUCKET = "collections-bucket"
-    SCHEMA = "collections-schema"
+def _(VastDBCatalog, VastDBConfig, get_s3_credentials, os):
+    ENDPOINT = os.environ.get("VASTDB_ENDPOINT", "http://vippool.ie-dev-pipeline.svc.cluster.local")
+    BUCKET = os.environ.get("VASTDB_BUCKET", "collections-bucket")
+    SCHEMA = os.environ.get("VASTDB_SCHEMA", "collections-schema")
     ACCESS_KEY, SECRET_KEY = get_s3_credentials()
 
     config = VastDBConfig(

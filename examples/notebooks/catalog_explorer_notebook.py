@@ -66,10 +66,10 @@ def _(
     make_shared_iceberg_catalog,
     os,
 ):
-    ENDPOINT = "http://vippool.ie-dev-pipeline.svc.cluster.local"
+    ENDPOINT = os.environ.get("VASTDB_ENDPOINT", "http://vippool.ie-dev-pipeline.svc.cluster.local")
     S3_ENDPOINT = ENDPOINT
-    BUCKET = "collections-bucket"
-    SCHEMA = "collections-schema"
+    BUCKET = os.environ.get("VASTDB_BUCKET", "collections-bucket")
+    SCHEMA = os.environ.get("VASTDB_SCHEMA", "collections-schema")
     ACCESS_KEY, SECRET_KEY = get_s3_credentials()
 
     vastdb_config = VastDBConfig(

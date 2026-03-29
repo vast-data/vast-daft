@@ -1,13 +1,11 @@
 # vast-daft
 
-Daft custom connector (`DataSource` / `DataSink`) for [VastDB](https://vastdata.com), with SQL query execution via ADBC and two-stage vector similarity search.
+Daft custom connector (`DataSource` / `DataSink`) for [VastDB](https://vastdata.com).
 
 ## Features
 
 - **`VastDBDataSource`** — Read from any VastDB table into a Daft DataFrame, with column projection and ibis predicate pushdown.
 - **`VastDBDataSink`** — Write Daft DataFrames to VastDB tables.
-- **`SQLDataSource`** — Execute arbitrary SQL against VastDB via the ADBC driver and get a Daft DataFrame back.
-- **`VectorSearchDataSource`** — Two-stage vector similarity search (ADBC `array_distance` for top-k, then SDK for full rows).
 - **`VastDBCatalog`** — Daft `Catalog` backed by VastDB: create, drop, list, and read/write tables via the standard Daft catalog API.
 - **`VastDBTable`** — Daft `Table` backed by a single VastDB table (read/append/overwrite).
 - **Predicate helpers** — `where_equal`, `where_in`, `where_between`, `where_contains`, and combinators (`and_`, `or_`).
@@ -78,48 +76,6 @@ sink = VastDBDataSink(config, "my_table", schema)
 daft.from_pydict({"id": ["a", "b"], "value": [1.0, 2.0]}).write_sink(sink).show()
 ```
 
-### SQL Queries via ADBC
-
-```python
-from vast_daft import VastDBConfig, SQLDataSource
-
-config = VastDBConfig(
-    ...,
-    adbc_driver_path="/path/to/libadbc_driver_vastdb.so",
-)
-result_schema = pa.schema([("id", pa.string()), ("total", pa.int64())])
-
-source = SQLDataSource(
-    config,
-    "SELECT id, count(*) as total FROM \"bucket/schema\".\"table\" GROUP BY id",
-    result_schema,
-)
-df = source.read()
-```
-
-### Vector Similarity Search
-
-```python
-from vast_daft import VastDBConfig, VectorSearchDataSource
-
-config = VastDBConfig(..., adbc_driver_path="/path/to/libadbc_driver_vastdb.so")
-table_schema = pa.schema([
-    ("pk", pa.string()),
-    ("pk_hash", pa.string()),
-    ("text", pa.string()),
-    ("vector", pa.list_(pa.float32(), 768)),
-])
-
-source = VectorSearchDataSource(
-    config,
-    table_name="embeddings",
-    table_schema=table_schema,
-    query_vector=[0.1] * 768,
-    k=10,
-)
-df = source.read()  # includes a 'distance' column
-```
-
 ### Catalog & Table Management
 
 ```python
@@ -163,7 +119,6 @@ config = VastDBConfig.from_env()
 | `VASTDB_BUCKET` | Yes | Bucket name |
 | `VASTDB_SCHEMA` | Yes | Schema name |
 | `VASTDB_SSL_VERIFY` | No | `true`/`false` (default `true`) |
-| `VASTDB_ADBC_DRIVER_PATH` | No | Path to `libadbc_driver_vastdb.so` |
 
 ## Deployment (Kubernetes + Ray + Marimo)
 

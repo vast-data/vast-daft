@@ -28,6 +28,7 @@ def _():
 
 @app.cell
 def _():
+    import os
     import time
 
     import daft
@@ -57,6 +58,7 @@ def _():
         generate_products,
         get_s3_credentials,
         make_shared_iceberg_catalog,
+        os,
         pa,
         time,
     )
@@ -78,6 +80,7 @@ def _(
     generate_products,
     get_s3_credentials,
     make_shared_iceberg_catalog,
+    os,
 ):
     # ---------- constants ----------
     NUM_PRODUCTS = 200
@@ -95,9 +98,9 @@ def _(
 
     # ---------- credentials ----------
     ACCESS_KEY, SECRET_KEY = get_s3_credentials()
-    ENDPOINT = "http://vippool.ie-dev-pipeline.svc.cluster.local"
-    BUCKET = "collections-bucket"
-    SCHEMA = "collections-schema"
+    ENDPOINT = os.environ.get("VASTDB_ENDPOINT", "http://vippool.ie-dev-pipeline.svc.cluster.local")
+    BUCKET = os.environ.get("VASTDB_BUCKET", "collections-bucket")
+    SCHEMA = os.environ.get("VASTDB_SCHEMA", "collections-schema")
 
     # ---------- VastDB catalog ----------
     vastdb_config = VastDBConfig(

@@ -23,16 +23,18 @@ def _():
 
 @app.cell
 def _():
+    import os
+
     from cloudpathlib import S3Client, S3Path  # type: ignore
     from helpers import get_s3_credentials  # type: ignore
 
-    return S3Client, S3Path, get_s3_credentials
+    return S3Client, S3Path, get_s3_credentials, os
 
 
 @app.cell
-def _(S3Client, S3Path, get_s3_credentials, mo):
-    ENDPOINT = "http://vippool.ie-dev-pipeline.svc.cluster.local"
-    BUCKET = "collections-bucket"
+def _(S3Client, S3Path, get_s3_credentials, mo, os):
+    ENDPOINT = os.environ.get("VASTDB_ENDPOINT", "http://vippool.ie-dev-pipeline.svc.cluster.local")
+    BUCKET = os.environ.get("VASTDB_BUCKET", "collections-bucket")
     ACCESS_KEY, SECRET_KEY = get_s3_credentials()
 
     s3_client = S3Client(
