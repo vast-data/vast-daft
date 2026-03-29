@@ -115,7 +115,7 @@ def _(
 
 @app.cell
 def _(mo, sess):
-    catalog_selector = mo.ui.radio(options=sess.list_catalogs())
+    catalog_selector = mo.ui.dropdown(options=sess.list_catalogs())
 
     mo.vstack(
         [
