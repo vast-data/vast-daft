@@ -171,34 +171,34 @@ See [RAY_DEPLOYMENT.md](RAY_DEPLOYMENT.md) for detailed architecture and trouble
 
 ```
 ┌─────────────────────────────────────────────────────────────────────┐
-│                        User Code (notebook)                          │
-│  df = sess.read_table("orders")                                      │
-│         .where(col("status") == "active")                            │
-│         .groupby("product").agg(sum("revenue"))                      │
-│         .collect()                                                   │
+│                        User Code (notebook)                         │
+│  df = sess.read_table("orders")                                     │
+│         .where(col("status") == "active")                           │
+│         .groupby("product").agg(sum("revenue"))                     │
+│         .collect()                                                  │
 └────────────────────────────┬────────────────────────────────────────┘
                              │  lazy — builds a logical plan
                              ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│                    Daft Logical Plan (driver)                        │
-│                                                                      │
-│   Aggregate [groupby product, sum revenue]                           │
-│       └── Filter [status == "active"]                                │
+│                    Daft Logical Plan (driver)                       │
+│                                                                     │
+│   Aggregate [groupby product, sum revenue]                          │
+│       └── Filter [status == "active"]                               │
 │               └── VastDBScan [bucket/schema/orders]  ← lazy node    │
 └────────────────────────────┬────────────────────────────────────────┘
                              │  .collect() triggers execution
                              ▼
 ┌─────────────────────────────────────────────────────────────────────┐
-│              Daft Optimizer  →  to_scan_tasks(pushdowns)             │
-│                                                                      │
+│              Daft Optimizer  →  to_scan_tasks(pushdowns)            │
+│                                                                     │
 │  pushdowns = { filters: status=="active", limit: None }             │
 │  → translate filter to ibis predicate  (_pushdown.py)               │
-│  → create N ScanTask objects  (one per split)                        │
+│  → create N ScanTask objects  (one per split)                       │
 └──────┬──────────────────────────────────────────────────────────────┘
        │  N pickled ScanTasks sent to Ray
        ▼
-┌──────────────────────────────────────────────────────────────────────────┐
-│                           Ray Cluster                                     │
+┌────────────────────────────────────────────────────────────────────────┐
+│                           Ray Cluster                                  │
 │  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐    │
 │  │  Worker 0   │  │  Worker 1   │  │  Worker 2   │  │  Worker 3   │    │
 │  │  split 0/4  │  │  split 1/4  │  │  split 2/4  │  │  split 3/4  │    │
@@ -206,12 +206,12 @@ See [RAY_DEPLOYMENT.md](RAY_DEPLOYMENT.md) for detailed architecture and trouble
 │  │ select_splits(num_splits=4) ─┤  │ select_splits(num_splits=4) ─┤    │
 │  │ → keep [0]  │  │ → keep [1]  │  │ → keep [2]  │  │ → keep [3]  │    │
 │  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘    │
-│         │ MicroPartition │ MicroPartition  │ MicroPartition │           │
-│         ▼                ▼                 ▼                ▼           │
-│  ┌──────────────────────────────────────────────────────────────────┐   │
-│  │        Daft groupby/agg — local partial → shuffle → final        │   │
-│  └──────────────────────────────────────────────────────────────────┘   │
-└──────────────────────────────────────────────────────────────────────────┘
+│         │ MicroPartition │ MicroPartition │ MicroPartition │           │
+│         ▼                ▼                ▼                ▼           │
+│  ┌──────────────────────────────────────────────────────────────────┐  │
+│  │        Daft groupby/agg — local partial → shuffle → final        │  │
+│  └──────────────────────────────────────────────────────────────────   │
+└────────────────────────────────────────────────────────────────────────┘
                              │  result MicroPartition
                              ▼
                      driver: .collect() returns
@@ -323,13 +323,6 @@ uv sync --all-extras
 # Run tests
 uv run pytest
 
-# Lint
-uv run ruff check src/ tests/
-
-# Type check
-uv run mypy src/
+# Type check and lint
+uv make check
 ```
-
-## License
-
-Apache-2.0
