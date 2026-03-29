@@ -1,4 +1,4 @@
-import marimo  # type: ignore
+import marimo
 
 __generated_with = "0.21.1"
 app = marimo.App(
@@ -66,7 +66,7 @@ def _(
     make_shared_iceberg_catalog,
     os,
 ):
-    ENDPOINT = os.environ.get("VASTDB_ENDPOINT", "http://vippool.ie-dev-pipeline.svc.cluster.local")
+    ENDPOINT = "http://vippool.ie-dev-pipeline.svc.cluster.local"
     S3_ENDPOINT = ENDPOINT
     BUCKET = os.environ.get("VASTDB_BUCKET", "collections-bucket")
     SCHEMA = os.environ.get("VASTDB_SCHEMA", "collections-schema")
@@ -80,8 +80,17 @@ def _(
         schema=SCHEMA,
         ssl_verify=False,
     )
-
     vastdb_catalog = VastDBCatalog(vastdb_config, alias="vast")
+
+    kafka_config = VastDBConfig(
+        endpoint=ENDPOINT,
+        access_key=ACCESS_KEY,
+        secret_key=SECRET_KEY,
+        bucket="event-broker",
+        schema="kafka_topics",
+        ssl_verify=False,
+    )
+    kafka_catalog = VastDBCatalog(kafka_config, alias="vast_kafka")
 
     iceberg_catalog = make_shared_iceberg_catalog(name="s3_iceberg")
 
@@ -97,9 +106,10 @@ def _(
     sess = daft.session()
     sess.attach_catalog(vastdb_catalog)
     sess.attach_catalog(iceberg_catalog)
+    sess.attach_catalog(kafka_catalog)
+
 
     sess.set_catalog(vastdb_catalog.name)
-
     return (sess,)
 
 
@@ -113,8 +123,12 @@ def _(mo, sess):
             catalog_selector,
         ]
     )
-
     return (catalog_selector,)
+
+
+@app.cell
+def _():
+    return
 
 
 @app.cell
