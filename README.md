@@ -210,6 +210,155 @@ make clean      # Remove everything including namespace
 
 See [RAY_DEPLOYMENT.md](RAY_DEPLOYMENT.md) for detailed architecture and troubleshooting.
 
+## Architecture
+
+### End-to-end flow on Ray
+
+```
+┌─────────────────────────────────────────────────────────────────────┐
+│                        User Code (notebook)                          │
+│  df = sess.read_table("orders")                                      │
+│         .where(col("status") == "active")                            │
+│         .groupby("product").agg(sum("revenue"))                      │
+│         .collect()                                                   │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │  lazy — builds a logical plan
+                             ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│                    Daft Logical Plan (driver)                        │
+│                                                                      │
+│   Aggregate [groupby product, sum revenue]                           │
+│       └── Filter [status == "active"]                                │
+│               └── VastDBScan [bucket/schema/orders]  ← lazy node    │
+└────────────────────────────┬────────────────────────────────────────┘
+                             │  .collect() triggers execution
+                             ▼
+┌─────────────────────────────────────────────────────────────────────┐
+│              Daft Optimizer  →  to_scan_tasks(pushdowns)             │
+│                                                                      │
+│  pushdowns = { filters: status=="active", limit: None }             │
+│  → translate filter to ibis predicate  (_pushdown.py)               │
+│  → create N ScanTask objects  (one per split)                        │
+└──────┬──────────────────────────────────────────────────────────────┘
+       │  N pickled ScanTasks sent to Ray
+       ▼
+┌──────────────────────────────────────────────────────────────────────────┐
+│                           Ray Cluster                                     │
+│  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐  ┌─────────────┐    │
+│  │  Worker 0   │  │  Worker 1   │  │  Worker 2   │  │  Worker 3   │    │
+│  │  split 0/4  │  │  split 1/4  │  │  split 2/4  │  │  split 3/4  │    │
+│  │ VastDB conn │  │ VastDB conn │  │ VastDB conn │  │ VastDB conn │    │
+│  │ select_splits(num_splits=4) ─┤  │ select_splits(num_splits=4) ─┤    │
+│  │ → keep [0]  │  │ → keep [1]  │  │ → keep [2]  │  │ → keep [3]  │    │
+│  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘  └──────┬──────┘    │
+│         │ MicroPartition │ MicroPartition  │ MicroPartition │           │
+│         ▼                ▼                 ▼                ▼           │
+│  ┌──────────────────────────────────────────────────────────────────┐   │
+│  │        Daft groupby/agg — local partial → shuffle → final        │   │
+│  └──────────────────────────────────────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────────────┘
+                             │  result MicroPartition
+                             ▼
+                     driver: .collect() returns
+```
+
+### Object model
+
+```
+VastDBConfig  (frozen dataclass — picklable, sent to every worker)
+    endpoint, access_key, secret_key, bucket, schema
+         │
+         │  instantiated per-worker
+         ▼
+VastDBConnection
+    ├── .get_table()                interactive path (create-if-missing)
+    │       HEAD bucket  +  list schemas  +  get/create table  = 3 RPCs
+    │
+    └── .get_table_from_metadata()  non-interactive hot path
+            TableMetadata + load_stats(tx) = 1 RPC
+            → skips 2 RPCs vs the interactive path
+            → used in: every read split, every write micro-partition
+```
+
+### `VastDBScanOperator` — Daft integration
+
+Implements `daft.io.scan.ScanOperator` directly (not `DataSource → _DataSourceShim`)
+to unlock optimisation hooks unavailable through the shim:
+
+| Hook | Value | Effect |
+|---|---|---|
+| `supports_count_pushdown()` | `True` | `df.count()` = 1 metadata RPC, no data scan |
+| `can_absorb_filter()` | `True` | WHERE predicate pushed to VastDB server |
+| `can_absorb_limit()` | `True` | LIMIT pushed to VastDB server |
+| `can_absorb_select()` | `False` | Column projection disabled to prevent join schema failures |
+
+### Split estimation
+
+```
+_resolve_num_splits()
+        │
+        ├─ explicit num_splits passed?     ──► use it
+        ├─ query_config.num_splits?        ──► use it
+        ├─ auto-estimate from table stats
+        │       load_stats(tx)             1 RPC
+        │       estimated = num_rows // rows_per_split  (default 4M)
+        │       n = min(estimated, cluster_cpus, 64)    ──► use n
+        ├─ Ray available, no stats?        ──► cluster_cpus (max 64)
+        └─ fallback                        ──► 4
+```
+
+### Filter pushdown
+
+Daft filter expressions are translated to ibis predicates via `_DaftToIbisVisitor`
+and passed to `table.select_splits(predicate=...)` for server-side filtering:
+
+| Daft expression | ibis predicate |
+|---|---|
+| `col("x") == 5` | `ibis._["x"] == 5` |
+| `col("s").startswith("foo")` | `ibis._["s"].startswith("foo")` |
+| `col("a").is_in([1,2,3])` | `ibis._["a"].isin([1,2,3])` |
+| `col("a").between(0, 10)` | `ibis._["a"].between(0, 10)` |
+| `(col("a") > 0) & (col("b") < 10)` | `(ibis._["a"] > 0) & (ibis._["b"] < 10)` |
+| `col("x").cast(...)` | unsupported → Daft applies client-side |
+
+### Write flow
+
+```
+df.write_sink(VastDBDataSink(...))
+
+DRIVER ── start() ─────────────────────────────────────────────
+    get_table(..., create_if_missing=True)
+    HEAD bucket + list schemas + get/create table  = 3 RPCs
+    Table guaranteed to exist before any writes.
+
+RAY WORKERS (concurrent, one call per micro-partition)
+    for mp in micropartitions:
+        arrow_table = mp.to_arrow()
+        get_table_from_metadata(...)     ← 1 RPC (load_stats)
+        table.insert(arrow_table)
+
+DRIVER ── finalize() ──────────────────────────────────────────
+    aggregate WriteResults → summary MicroPartition
+```
+
+### RPC budget
+
+```
+Operation                            RPCs   Path
+─────────────────────────────────────────────────────────────────────
+Scan operator construction            1     load_stats (split estimate)
+Each read split  (per Ray worker)     1     load_stats (table_type)
+df.count()  (entire query!)           1     load_stats → num_rows
+write start()  (once, on driver)      3     HEAD bucket + schema + table
+Each write micro-partition            1     load_stats (table_type)
+
+10M-row read, 4 splits:
+  OLD (interactive per split):  1 + 4×3 = 13 RPCs
+  NEW (non-interactive):        1 + 4×1 =  5 RPCs   ← 62% fewer
+```
+
+See [`examples/notebooks/architecture_notebook.py`](examples/notebooks/architecture_notebook.py) for the full interactive walkthrough.
+
 ## Development
 
 ```bash
