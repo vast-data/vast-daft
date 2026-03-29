@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import daft
+import ray
 import numpy as np
 import pyarrow as pa
 from pyiceberg.catalog.sql import SqlCatalog
@@ -22,19 +23,46 @@ DEFAULT_PRODUCTS: list[str] = [
 ]
 DEFAULT_TIERS: list[str] = ["bronze", "silver", "gold", "platinum"]
 
+VAST_DAFT_DEPS: list[str] = [
+    "daft>=0.7.5",
+    "vastdb>=1.2",
+    "pyiceberg[s3fs,sql-sqlite]>=0.11.1",
+    "pyarrow>=15.0",
+    "ibis-framework>=9.0",
+    "adbc-driver-manager>=1.0",
+    "sqlalchemy",
+]
+
 SHARED_STORAGE_PATH: str = "/shared"
 SHARED_ICEBERG_CATALOG_DB: str = "iceberg_catalog.db"
 
 
 def configure_daft_runner(*, allow_local_fallback: bool = True) -> str:
     """Configure Daft for marimo and connect to Ray when available."""
+    import glob
+
     os.environ["RAY_TQDM_DISABLE"] = "1"
     os.environ["RAY_LOG_TO_DRIVER"] = "0"
     os.environ["PYTHONWARNINGS"] = "ignore::DeprecationWarning"
 
     try:
-        daft.set_runner_ray()
-        return f"Connected to Ray (RAY_ADDRESS={os.environ.get('RAY_ADDRESS', 'not set')})"
+        # Build runtime_env: wheel via py_modules + deps via pip
+        runtime_env = {}
+        wheel_path = os.environ.get("VAST_DAFT_WHEEL")
+        if wheel_path and not os.path.isfile(wheel_path):
+            wheel_matches = glob.glob(os.path.join(wheel_path, "vast_daft-*.whl"))
+            wheel_path = wheel_matches[0] if wheel_matches else wheel_path
+        if not wheel_path:
+            wheel_matches = glob.glob("/mnt/wheel/vast_daft-*.whl")
+            wheel_path = wheel_matches[0] if wheel_matches else None
+        if wheel_path and os.path.isfile(wheel_path):
+            runtime_env["py_modules"] = [wheel_path]
+            runtime_env["pip"] = VAST_DAFT_DEPS
+
+        ray_address = os.environ.get("RAY_ADDRESS")
+        ray.init(address=ray_address, runtime_env=runtime_env or None, ignore_reinit_error=True)
+        daft.set_runner_ray(noop_if_initialized=True)
+        return f"Connected to Ray (address={ray_address or 'auto'}, wheel={'yes' if wheel_path else 'no'})"
     except Exception as exc:
         if not allow_local_fallback:
             raise
