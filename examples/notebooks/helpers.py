@@ -3,9 +3,9 @@
 from __future__ import annotations
 
 import os
-import random
-
 import daft
+import numpy as np
+import pyarrow as pa
 from pyiceberg.catalog.sql import SqlCatalog
 
 DEFAULT_PRODUCTS: list[str] = [
@@ -56,19 +56,23 @@ def generate_customers(
     seed: int = 42,
     include_email: bool = False,
     tiers: list[str] | None = None,
-) -> dict[str, list[int] | list[str]]:
-    """Generate deterministic customer rows for notebook demos."""
-    rng = random.Random(seed)
+) -> pa.Table:
+    """Generate deterministic customer rows as a PyArrow table."""
+    rng = np.random.default_rng(seed)
     tier_values = tiers or DEFAULT_TIERS
 
-    customers: dict[str, list[int] | list[str]] = {
-        "customer_id": list(range(1, count + 1)),
-        "name": [f"customer_{i}" for i in range(1, count + 1)],
+    ids = np.arange(1, count + 1, dtype=np.int64)
+    names = [f"customer_{i}" for i in range(1, count + 1)]
+    tier_idx = rng.integers(0, len(tier_values), size=count)
+
+    columns: dict[str, pa.Array] = {
+        "customer_id": pa.array(ids),
+        "name": pa.array(names, type=pa.string()),
     }
     if include_email:
-        customers["email"] = [f"user_{i}@example.com" for i in range(1, count + 1)]
-    customers["tier"] = [rng.choice(tier_values) for _ in range(count)]
-    return customers
+        columns["email"] = pa.array([f"user_{i}@example.com" for i in range(1, count + 1)], type=pa.string())
+    columns["tier"] = pa.array([tier_values[i] for i in tier_idx], type=pa.string())
+    return pa.table(columns)
 
 
 def generate_orders(
@@ -78,18 +82,29 @@ def generate_orders(
     seed: int = 123,
     products: list[str] | None = None,
     start_id: int = 1001,
-) -> dict[str, list[int] | list[float] | list[str]]:
-    """Generate deterministic order rows for notebook demos."""
-    rng = random.Random(seed)
+) -> pa.Table:
+    """Generate deterministic order rows as a PyArrow table.
+
+    Uses NumPy for vectorized generation — significantly faster than
+    pure-Python loops for large row counts (e.g. 1M+ per batch).
+    """
+    rng = np.random.default_rng(seed)
     product_values = products or DEFAULT_PRODUCTS
 
-    return {
-        "order_id": list(range(start_id, start_id + count)),
-        "customer_id": [rng.randint(1, customer_count) for _ in range(count)],
-        "product": [rng.choice(product_values) for _ in range(count)],
-        "amount": [round(rng.uniform(5.0, 500.0), 2) for _ in range(count)],
-        "order_date": [f"2025-{rng.randint(1, 12):02d}-{rng.randint(1, 28):02d}" for _ in range(count)],
-    }
+    order_ids = np.arange(start_id, start_id + count, dtype=np.int64)
+    customer_ids = rng.integers(1, customer_count + 1, size=count)
+    product_idx = rng.integers(0, len(product_values), size=count)
+    amounts = np.round(rng.uniform(5.0, 500.0, size=count), 2)
+    months = rng.integers(1, 13, size=count)
+    days = rng.integers(1, 29, size=count)
+
+    return pa.table({
+        "order_id": pa.array(order_ids),
+        "customer_id": pa.array(customer_ids),
+        "product": pa.array([product_values[i] for i in product_idx], type=pa.string()),
+        "amount": pa.array(amounts),
+        "order_date": pa.array([f"2025-{m:02d}-{d:02d}" for m, d in zip(months, days)], type=pa.string()),
+    })
 
 
 DEFAULT_CATEGORIES: dict[str, str] = {
@@ -142,21 +157,20 @@ def generate_products(
     products: list[str] | None = None,
     categories: dict[str, str] | None = None,
     unique_names: bool = False,
-) -> dict[str, list[int] | list[float] | list[str]]:
-    """Generate a wide product-catalog table with many columns.
+) -> pa.Table:
+    """Generate a wide product-catalog table as a PyArrow table.
 
     When *unique_names* is ``True`` each row gets a distinct product name
     (e.g. ``Widget A-001``).  The generated names still start with a base
     product so that ``generate_orders`` output can reference the same names
     when *products* is passed explicitly.
 
-    Returns a dict suitable for ``daft.from_pydict()`` with columns:
-    product, sku, category, sub_category, supplier, warehouse,
+    Columns: product, sku, category, sub_category, supplier, warehouse,
     color, weight_kg, cost_price, retail_price, margin_pct,
     stock_qty, reorder_level, lead_time_days, rating, review_count,
     description
     """
-    rng = random.Random(seed)
+    rng = np.random.default_rng(seed)
     base_products = products or DEFAULT_PRODUCTS
     cat_map = categories or DEFAULT_CATEGORIES
     cat_list = list(set(cat_map.values()))
@@ -164,30 +178,54 @@ def generate_products(
     if unique_names:
         product_names = [f"{base_products[i % len(base_products)]}-{i + 1:04d}" for i in range(count)]
     else:
-        product_names = [rng.choice(base_products) for _ in range(count)]
+        prod_idx = rng.integers(0, len(base_products), size=count)
+        product_names = [base_products[i] for i in prod_idx]
 
-    return {
-        "product": product_names,
-        "sku": [f"SKU-{rng.randint(100000, 999999)}" for _ in range(count)],
-        "category": [cat_map.get(p.split("-")[0], rng.choice(cat_list)) for p in product_names],
-        "sub_category": [f"sub_{rng.randint(1, 20):02d}" for _ in range(count)],
-        "supplier": [rng.choice(DEFAULT_SUPPLIERS) for _ in range(count)],
-        "warehouse": [rng.choice(DEFAULT_WAREHOUSES) for _ in range(count)],
-        "color": [rng.choice(DEFAULT_COLORS) for _ in range(count)],
-        "weight_kg": [round(rng.uniform(0.05, 25.0), 2) for _ in range(count)],
-        "cost_price": [round(rng.uniform(1.0, 200.0), 2) for _ in range(count)],
-        "retail_price": [round(rng.uniform(5.0, 500.0), 2) for _ in range(count)],
-        "margin_pct": [round(rng.uniform(0.05, 0.65), 4) for _ in range(count)],
-        "stock_qty": [rng.randint(0, 10000) for _ in range(count)],
-        "reorder_level": [rng.randint(10, 500) for _ in range(count)],
-        "lead_time_days": [rng.randint(1, 90) for _ in range(count)],
-        "rating": [round(rng.uniform(1.0, 5.0), 1) for _ in range(count)],
-        "review_count": [rng.randint(0, 5000) for _ in range(count)],
-        "description": [
-            f"Product {p} — high quality {rng.choice(DEFAULT_COLORS).lower()} unit from {rng.choice(DEFAULT_SUPPLIERS)}"
-            for p in product_names
-        ],
-    }
+    sku_nums = rng.integers(100000, 1000000, size=count)
+    sub_cat_nums = rng.integers(1, 21, size=count)
+    supplier_idx = rng.integers(0, len(DEFAULT_SUPPLIERS), size=count)
+    warehouse_idx = rng.integers(0, len(DEFAULT_WAREHOUSES), size=count)
+    color_idx = rng.integers(0, len(DEFAULT_COLORS), size=count)
+    weight_kg = np.round(rng.uniform(0.05, 25.0, size=count), 2)
+    cost_price = np.round(rng.uniform(1.0, 200.0, size=count), 2)
+    retail_price = np.round(rng.uniform(5.0, 500.0, size=count), 2)
+    margin_pct = np.round(rng.uniform(0.05, 0.65, size=count), 4)
+    stock_qty = rng.integers(0, 10001, size=count)
+    reorder_level = rng.integers(10, 501, size=count)
+    lead_time_days = rng.integers(1, 91, size=count)
+    rating = np.round(rng.uniform(1.0, 5.0, size=count), 1)
+    review_count = rng.integers(0, 5001, size=count)
+    desc_color_idx = rng.integers(0, len(DEFAULT_COLORS), size=count)
+    desc_supplier_idx = rng.integers(0, len(DEFAULT_SUPPLIERS), size=count)
+
+    return pa.table({
+        "product": pa.array(product_names, type=pa.string()),
+        "sku": pa.array([f"SKU-{n}" for n in sku_nums], type=pa.string()),
+        "category": pa.array(
+            [cat_map.get(p.split("-")[0], cat_list[0]) for p in product_names],
+            type=pa.string(),
+        ),
+        "sub_category": pa.array([f"sub_{n:02d}" for n in sub_cat_nums], type=pa.string()),
+        "supplier": pa.array([DEFAULT_SUPPLIERS[i] for i in supplier_idx], type=pa.string()),
+        "warehouse": pa.array([DEFAULT_WAREHOUSES[i] for i in warehouse_idx], type=pa.string()),
+        "color": pa.array([DEFAULT_COLORS[i] for i in color_idx], type=pa.string()),
+        "weight_kg": pa.array(weight_kg),
+        "cost_price": pa.array(cost_price),
+        "retail_price": pa.array(retail_price),
+        "margin_pct": pa.array(margin_pct),
+        "stock_qty": pa.array(stock_qty),
+        "reorder_level": pa.array(reorder_level),
+        "lead_time_days": pa.array(lead_time_days),
+        "rating": pa.array(rating),
+        "review_count": pa.array(review_count),
+        "description": pa.array(
+            [
+                f"Product {p} — high quality {DEFAULT_COLORS[ci].lower()} unit from {DEFAULT_SUPPLIERS[si]}"
+                for p, ci, si in zip(product_names, desc_color_idx, desc_supplier_idx)
+            ],
+            type=pa.string(),
+        ),
+    })
 
 
 def get_shared_catalog_db_path() -> str:

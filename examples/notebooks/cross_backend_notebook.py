@@ -85,11 +85,11 @@ def _(
     # ---------- constants ----------
     NUM_PRODUCTS = 200
     NUM_CUSTOMERS = 10_000
-    NUM_ORDERS = 10_000_000
-    ORDERS_BATCH_SIZE = 1_000_000
+    NUM_ORDERS = 50_000_000
+    ORDERS_BATCH_SIZE = 5_000_000
 
     # Pre-generate unique product names so orders reference the same set.
-    PRODUCT_NAMES = generate_products(NUM_PRODUCTS, unique_names=True)["product"]
+    PRODUCT_NAMES = generate_products(NUM_PRODUCTS, unique_names=True).column("product").to_pylist()
 
     VASTDB_ORDERS_TABLE = "__xbackend_orders__"
     VASTDB_PRODUCTS_TABLE = "__xbackend_products__"
@@ -189,7 +189,7 @@ def _(VASTDB_PRODUCTS_TABLE, VastDBDataSink, daft, generate_products, pa, sess, 
             ("description", pa.string()),
         ]
     )
-    df_products = daft.from_pydict(generate_products(200, unique_names=True))
+    df_products = daft.from_arrow(generate_products(200, unique_names=True))
     _sink = VastDBDataSink(
         config=vastdb_config,
         table_name=VASTDB_PRODUCTS_TABLE,
@@ -229,7 +229,7 @@ def _(
         iceberg_catalog.drop_table(_fqn)
 
     _t0 = time.perf_counter()
-    _df = daft.from_pydict(generate_customers(NUM_CUSTOMERS))
+    _df = daft.from_arrow(generate_customers(NUM_CUSTOMERS))
     _iceberg_table = iceberg_catalog.create_table(_fqn, schema=_df.to_arrow().schema)
     _df.write_iceberg(_iceberg_table, mode="append", io_config=io_config).show()
     print(f"Wrote {NUM_CUSTOMERS:,} customers to Iceberg in {time.perf_counter() - _t0:.2f}s")
@@ -287,7 +287,7 @@ def _(
             start_id=_batch_start + 1,
             products=PRODUCT_NAMES,
         )
-        _df = daft.from_pydict(_batch)
+        _df = daft.from_arrow(_batch)
         _sink = VastDBDataSink(
             config=vastdb_config,
             table_name=VASTDB_ORDERS_TABLE,

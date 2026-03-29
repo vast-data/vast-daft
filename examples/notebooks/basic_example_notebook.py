@@ -165,7 +165,7 @@ def _(CUSTOMERS_SCHEMA, CUSTOMERS_TABLE, VastDBDataSink, catalog, config, custom
     catalog.drop_table(CUSTOMERS_TABLE)
 
     _t0 = time.perf_counter()
-    df_customers = daft.from_pydict(customers_data)
+    df_customers = daft.from_arrow(customers_data)
     _sink = VastDBDataSink(
         config=config,
         table_name=CUSTOMERS_TABLE,
@@ -183,7 +183,7 @@ def _(ORDERS_SCHEMA, ORDERS_TABLE, VastDBDataSink, catalog, config, daft, orders
     catalog.drop_table(ORDERS_TABLE)
 
     _t0 = time.perf_counter()
-    df_orders = daft.from_pydict(orders_data)
+    df_orders = daft.from_arrow(orders_data)
     _sink = VastDBDataSink(
         config=config,
         table_name=ORDERS_TABLE,
