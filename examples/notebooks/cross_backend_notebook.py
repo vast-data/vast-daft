@@ -44,12 +44,14 @@ def _():
         make_shared_iceberg_catalog,
     )
     from vast_daft import VastDBCatalog, VastDBConfig, VastDBDataSink
+    from vast_daft.connection import VastDBConnection
 
     return (
         IOConfig,
         S3Config,
         VastDBCatalog,
         VastDBConfig,
+        VastDBConnection,
         VastDBDataSink,
         configure_daft_runner,
         daft,
@@ -76,6 +78,7 @@ def _(
     S3Config,
     VastDBCatalog,
     VastDBConfig,
+    VastDBConnection,
     daft,
     generate_products,
     get_s3_credentials,
@@ -112,6 +115,7 @@ def _(
         ssl_verify=False,
     )
     vastdb_catalog = VastDBCatalog(vastdb_config, alias="vast")
+    vastdb_conn = VastDBConnection(vastdb_config)
 
     # ---------- Iceberg catalog ----------
     iceberg_catalog = make_shared_iceberg_catalog(name="s3_iceberg")
@@ -147,6 +151,7 @@ def _(
         io_config,
         sess,
         vastdb_config,
+        vastdb_conn,
     )
 
 
@@ -254,13 +259,11 @@ def _(
     ORDERS_BATCH_SIZE,
     PRODUCT_NAMES,
     VASTDB_ORDERS_TABLE,
-    VastDBDataSink,
-    daft,
     generate_orders,
     pa,
     sess,
     time,
-    vastdb_config,
+    vastdb_conn,
 ):
     sess.set_catalog("vast")
     if sess.has_table(VASTDB_ORDERS_TABLE):
@@ -276,10 +279,22 @@ def _(
         ]
     )
 
+    # Ensure the table exists (interactive path, once)
+    with vastdb_conn.get_table(
+        VASTDB_ORDERS_TABLE,
+        _orders_schema,
+        bucket=vastdb_conn.config.bucket,
+        schema=vastdb_conn.config.schema,
+        create_if_missing=True,
+    ) as _:
+        pass
+
     _t0 = time.perf_counter()
     _total_written = 0
     for _batch_start in range(0, NUM_ORDERS, ORDERS_BATCH_SIZE):
         _batch_size = min(ORDERS_BATCH_SIZE, NUM_ORDERS - _batch_start)
+
+        _t_gen = time.perf_counter()
         _batch = generate_orders(
             _batch_size,
             NUM_CUSTOMERS,
@@ -287,16 +302,20 @@ def _(
             start_id=_batch_start + 1,
             products=PRODUCT_NAMES,
         )
-        _df = daft.from_arrow(_batch)
-        _sink = VastDBDataSink(
-            config=vastdb_config,
-            table_name=VASTDB_ORDERS_TABLE,
-            table_schema=_orders_schema,
-            create_if_missing=True,
-        )
-        _df.write_sink(_sink).show()
+        _gen_time = time.perf_counter() - _t_gen
+
+        _t_write = time.perf_counter()
+        with vastdb_conn.get_table_from_metadata(
+            VASTDB_ORDERS_TABLE,
+            _orders_schema,
+            bucket=vastdb_conn.config.bucket,
+            schema=vastdb_conn.config.schema,
+        ) as _table:
+            _table.insert(_batch)
+        _write_time = time.perf_counter() - _t_write
+
         _total_written += _batch_size
-        print(f"  batch {_total_written:,}/{NUM_ORDERS:,}")
+        print(f"  batch {_total_written:,}/{NUM_ORDERS:,}: gen={_gen_time:.2f}s, write={_write_time:.2f}s")
 
     print(f"Wrote {NUM_ORDERS:,} orders in {time.perf_counter() - _t0:.2f}s")
     return
