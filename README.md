@@ -334,6 +334,15 @@ Each write micro-partition            1     load_stats (table_type)
 
 See [`examples/notebooks/architecture_notebook.py`](examples/notebooks/architecture_notebook.py) for the full interactive walkthrough.
 
+### Catalog Explorer
+
+The [`examples/notebooks/catalog_explorer_notebook.py`](examples/notebooks/catalog_explorer_notebook.py) notebook provides an interactive UI for browsing VastDB, Iceberg, and Kafka catalogs side-by-side:
+
+- **Catalog & table browser** — select a catalog and explore its tables
+- **SQL editor** — run ad-hoc SQL queries with execution timing
+- **Python editor** — execute arbitrary Daft/Python code against the session
+- **Schema viewer** — inspect column names and types for any table
+
 ## Development
 
 ```bash
