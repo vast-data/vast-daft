@@ -122,21 +122,24 @@ config = VastDBConfig.from_env()
 
 ## Deployment (Kubernetes + Ray + Marimo)
 
-Deploy a Ray cluster and Marimo notebook server on Kubernetes with a single command:
+Deploy a Ray cluster and Marimo notebook server on Kubernetes:
+
+1. Copy `.env.example` to a cluster-specific file (e.g. `.env.v141`) and fill in credentials and endpoints.
+2. Deploy:
 
 ```bash
-make deploy
+make deploy CLUSTER_ENV=.env.v141
 ```
 
-This builds a Docker image with `vast_daft` + dependencies, pushes it to the Zarf in-cluster registry, and deploys:
+This builds a wheel, creates the K8s secret from `CLUSTER_ENV`, and deploys via Helm:
 - **Ray cluster** (1 head + 2 workers) via KubeRay operator
 - **Marimo notebook** server for interactive development
-- **Ingress** for browser access (nginx)
+- **Ingress** for browser access (nginx), with hostnames derived from `CLUSTER_DOMAIN`
 
-| Service | URL |
-|---------|-----|
-| Marimo notebook | `http://marimo.ray-system.v141.lc` |
-| Ray dashboard | `http://ray-dashboard.ray-system.v141.lc` |
+| Service | URL pattern |
+|---------|-------------|
+| Marimo notebook | `http://marimo.<namespace>.<CLUSTER_DOMAIN>` |
+| Ray dashboard | `http://ray-dashboard.<namespace>.<CLUSTER_DOMAIN>` |
 
 ### Using Ray from Marimo
 

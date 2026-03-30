@@ -36,4 +36,5 @@ htmlcov/
 
 # Environment
 .env
-.env.cluster
+.env.*
+!.env.example
