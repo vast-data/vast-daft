@@ -29,7 +29,6 @@ VAST_DAFT_DEPS: list[str] = [
     "pyiceberg[s3fs,sql-sqlite]>=0.11.1",
     "pyarrow>=15.0",
     "ibis-framework>=9.0",
-    "adbc-driver-manager>=1.0",
     "sqlalchemy",
 ]
 
