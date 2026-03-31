@@ -36,8 +36,8 @@ def _():
     import time
 
     import daft
-
     from helpers import configure_daft_runner, get_s3_credentials, make_shared_iceberg_catalog  # type: ignore
+
     from vast_daft import VastDBCatalog, VastDBConfig
 
     return (

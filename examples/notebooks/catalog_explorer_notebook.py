@@ -1,7 +1,7 @@
 import marimo
 
 __generated_with = "0.21.1"
-app = marimo.App(
+app = marimo.App(  # type: ignore
     width="medium",
     layout_file="layouts/catalog_explorer_notebook.grid.json",
 )
@@ -33,8 +33,8 @@ def _():
 
     import daft
     from daft.io import IOConfig, S3Config
-
     from helpers import configure_daft_runner, get_s3_credentials, make_shared_iceberg_catalog  # type: ignore
+
     from vast_daft import VastDBCatalog, VastDBConfig
 
     return (
@@ -53,7 +53,7 @@ def _():
 
 @app.cell
 def _(configure_daft_runner):
-    runner_status = configure_daft_runner()
+    _runner_status = configure_daft_runner()
     return
 
 
@@ -96,7 +96,7 @@ def _(
 
     iceberg_catalog = make_shared_iceberg_catalog(name="s3_iceberg")
 
-    io_config = IOConfig(
+    _io_config = IOConfig(
         s3=S3Config(
             endpoint_url=S3_ENDPOINT,
             key_id=ACCESS_KEY,
@@ -168,7 +168,6 @@ def _(catalog_selector, mo, tables_table):
 
 @app.cell
 def _(daft, mo, py_editor, py_run_btn, sess, time):
-    py_run_btn
     _code = py_editor.value.strip()
     if _code:
         try:
@@ -188,13 +187,14 @@ def _(daft, mo, py_editor, py_run_btn, sess, time):
         except Exception as e:
             py_output = mo.callout(mo.md(f"**Error:** {e}"), kind="danger")
     else:
-        py_output = mo.md("_Write Python code and press Shift+Enter or click Execute. Use `daft` and assign result to `df`._")
+        py_output = mo.md(
+            "_Write Python code and press Shift+Enter or click Execute. Use `daft` and assign result to `df`._"
+        )
     return (py_output,)
 
 
 @app.cell
 def _(mo, sess, sql_editor, sql_run_btn, time):
-    sql_run_btn
     _query = sql_editor.value.strip()
     if _query:
         try:
@@ -239,7 +239,11 @@ def _(
         _output = mo.ui.tabs(
             {
                 "SQL": _sql_tab,
-                "Schema": mo.ui.table(_schema_rows, selection=None, page_size=len(_schema_rows)).style({"max-height": "400px", "overflow": "auto"}),
+                "Schema": mo.ui.table(
+                    _schema_rows,
+                    selection=None,
+                    page_size=len(_schema_rows),
+                ).style({"max-height": "400px", "overflow": "auto"}),
                 "DataFrame": _py_tab,
             }
         )

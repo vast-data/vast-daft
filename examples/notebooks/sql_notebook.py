@@ -1,7 +1,7 @@
 import marimo  # type: ignore
 
 __generated_with = "0.13.0"
-app = marimo.App(width="medium")
+app = marimo.App(width="medium")  # type: ignore
 
 
 @app.cell
@@ -46,8 +46,8 @@ def _():
 
     import daft
     import pyarrow as pa
-
     from helpers import DEFAULT_TIERS, configure_daft_runner, get_s3_credentials  # type: ignore
+
     from vast_daft import (
         VastDBCatalog,
         VastDBConfig,

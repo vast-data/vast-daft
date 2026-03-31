@@ -34,7 +34,6 @@ def _():
     import daft
     import pyarrow as pa
     from daft.io import IOConfig, S3Config
-
     from helpers import (  # type: ignore
         configure_daft_runner,
         generate_customers,
@@ -43,6 +42,7 @@ def _():
         get_s3_credentials,
         make_shared_iceberg_catalog,
     )
+
     from vast_daft import VastDBCatalog, VastDBConfig, VastDBDataSink
     from vast_daft.connection import VastDBConnection
 

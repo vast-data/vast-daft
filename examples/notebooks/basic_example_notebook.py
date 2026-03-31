@@ -34,8 +34,8 @@ def _():
 
     import daft
     import pyarrow as pa
-
     from helpers import configure_daft_runner, generate_customers, generate_orders, get_s3_credentials  # type: ignore
+
     from vast_daft import (
         VastDBCatalog,
         VastDBConfig,

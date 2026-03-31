@@ -35,16 +35,15 @@ from pathlib import Path
 
 import daft
 import pyarrow as pa
+from daft import col, lit
 from dotenv import load_dotenv
 
-from daft import col, lit
 from vast_daft import (
     VastDBCatalog,
     VastDBConfig,
     VastDBDataSink,
     VastDBDataSource,
 )
-
 
 # ---------------------------------------------------------------------------
 # Configuration

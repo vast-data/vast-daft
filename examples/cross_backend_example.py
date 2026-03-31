@@ -285,8 +285,8 @@ def main() -> None:
     io_config = make_io_config()
 
     print(f"\nCross-backend example: {NUM_CUSTOMERS:,} customers, {NUM_ORDERS:,} orders")
-    print(f"Backends: VastDB (native) + Iceberg (S3-backed)")
-    print(f"Ray cluster: distributed execution enabled\n")
+    print("Backends: VastDB (native) + Iceberg (S3-backed)")
+    print("Ray cluster: distributed execution enabled\n")
 
     # -- Cleanup stale state from previous runs ----------------------------
     for t in [VASTDB_ORDERS_TABLE, VASTDB_CUSTOMERS_TABLE]:

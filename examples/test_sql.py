@@ -244,7 +244,7 @@ def demo_mode2(access_key: str, secret_key: str) -> None:
     daft.detach_catalog(CATALOG_ALIAS)
 
     # Programmatic API: use "schema.table" identifier directly
-    print(f"\n--- Programmatic: catalog.list_tables() with bucket-only config ---")
+    print("\n--- Programmatic: catalog.list_tables() with bucket-only config ---")
     tables = catalog.list_tables()
     print(f"  Tables (schema-qualified): {[str(t) for t in tables]}")
 

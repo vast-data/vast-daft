@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import os
+
 import daft
-import ray
 import numpy as np
 import pyarrow as pa
+import ray
 from pyiceberg.catalog.sql import SqlCatalog
 
 DEFAULT_PRODUCTS: list[str] = [

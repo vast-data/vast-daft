@@ -38,8 +38,8 @@ def _():
     import daft
     import pyarrow as pa
     from daft import DataType
-
     from helpers import configure_daft_runner, get_s3_credentials  # type: ignore
+
     from vast_daft import VastDBCatalog, VastDBConfig
 
     return (

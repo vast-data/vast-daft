@@ -208,7 +208,7 @@ def main() -> None:
     catalog = VastDBCatalog(config)
 
     print(f"\nConfig: {NUM_CUSTOMERS:,} customers, {NUM_ORDERS:,} orders")
-    print(f"Ray cluster: distributed execution enabled\n")
+    print("Ray cluster: distributed execution enabled\n")
 
     # Clean up stale tables from previous runs
     for t in [CUSTOMERS_TABLE, ORDERS_TABLE, JOINED_TABLE]:
@@ -259,7 +259,7 @@ def main() -> None:
             num_splits=4,
         )
         df_customers_read = src.read()
-        print(f"  (lazy — 4 splits will distribute across Ray workers)")
+        print("  (lazy — 4 splits will distribute across Ray workers)")
 
     with timed("Read orders from VastDB (split across workers)"):
         src = VastDBDataSource(
@@ -269,7 +269,7 @@ def main() -> None:
             num_splits=4,
         )
         df_orders_read = src.read()
-        print(f"  (lazy — 4 splits will distribute across Ray workers)")
+        print("  (lazy — 4 splits will distribute across Ray workers)")
 
     # ------------------------------------------------------------------
     # Step 4: Join customers x orders

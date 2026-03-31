@@ -30,8 +30,8 @@ def _():
     import os
 
     import daft
-
     from helpers import configure_daft_runner, get_s3_credentials  # type: ignore
+
     from vast_daft import VastGravitinoCatalog
 
     return configure_daft_runner, daft, get_s3_credentials, os, VastGravitinoCatalog
