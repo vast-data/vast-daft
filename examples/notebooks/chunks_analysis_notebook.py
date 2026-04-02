@@ -86,7 +86,7 @@ def _(VastDBCatalog, VastDBConfig, daft, get_s3_credentials, os):
 
     print(f"Connected to VastDB at {ENDPOINT}")
     print(f"Catalog tables: {catalog.list_tables()}")
-    return (sess,)
+    return catalog, sess
 
 
 @app.cell
@@ -98,11 +98,26 @@ def _(mo):
 
 
 @app.cell
-def _(sess, time):
+def _(catalog, time):
     _t0 = time.perf_counter()
 
-    df_chunks = sess.read_table("chunks")
-    df_ingestion = sess.read_table("ingestion_status")
+    df_chunks = catalog.get_table("chunks").read()
+    df_ingestion = catalog.get_table("ingestion_status").read()
+    df_chunks_join = catalog.get_table("chunks").read(
+        columns=["collection_name"],
+    )
+    df_ingestion_join = catalog.get_table("ingestion_status").read(
+        columns=["collection_name", "status", "handler_type"],
+    )
+    df_chunks_probe = catalog.get_table("chunks").read(
+        columns=["pk", "source"],
+    )
+    df_chunks_query_vector = catalog.get_table("chunks").read(
+        columns=["pk", "vector"],
+    )
+    df_chunks_similarity = catalog.get_table("chunks").read(
+        columns=["pk", "source", "collection_name", "chunk_number", "raw_text", "vector"],
+    )
 
     _chunks_count = df_chunks.count().collect()
     _ingestion_count = df_ingestion.count().collect()
@@ -111,7 +126,15 @@ def _(sess, time):
     # print(f"Loaded chunks: {_chunks_count:,} rows")
     # print(f"Loaded ingestion_status: {_ingestion_count:,} rows")
     # print(f"Elapsed: {_elapsed:.2f}s")
-    return df_chunks, df_ingestion
+    return (
+        df_chunks,
+        df_chunks_join,
+        df_chunks_probe,
+        df_chunks_query_vector,
+        df_chunks_similarity,
+        df_ingestion,
+        df_ingestion_join,
+    )
 
 
 @app.cell
@@ -126,10 +149,19 @@ def _(mo):
 
 
 @app.cell
-def _(daft, df_chunks, df_ingestion):
-    # Join on collection_name
-    df_joined = df_chunks.select("collection_name", "pk", "source", "chunk_number").join(
-        df_ingestion.select(daft.col("collection_name").alias("ing_collection_name"), "status", "handler_type", "key"),
+def _(daft, df_chunks_join, df_ingestion_join):
+    # Pre-aggregate chunk rows to a collection-level dimension table before
+    # joining. This avoids materializing one row per chunk through the join.
+    df_chunk_counts = df_chunks_join.groupby("collection_name").agg(
+        daft.col("collection_name").count().alias("chunk_count"),
+    )
+
+    df_joined = df_chunk_counts.join(
+        df_ingestion_join.select(
+            daft.col("collection_name").alias("ing_collection_name"),
+            "status",
+            "handler_type",
+        ),
         left_on="collection_name",
         right_on="ing_collection_name",
         how="inner",
@@ -144,7 +176,7 @@ def _(daft, df_joined):
     df_status_counts = (
         df_joined.groupby("status")
         .agg(
-            daft.col("pk").count().alias("chunk_count"),
+            daft.col("chunk_count").sum().alias("chunk_count"),
         )
         .sort("chunk_count", desc=True)
     )
@@ -158,7 +190,7 @@ def _(daft, df_joined):
     df_status_handler = (
         df_joined.groupby("status", "handler_type")
         .agg(
-            daft.col("pk").count().alias("chunk_count"),
+            daft.col("chunk_count").sum().alias("chunk_count"),
         )
         .sort(["status", "handler_type"])
     )
@@ -182,12 +214,19 @@ def _(mo):
 
 
 @app.cell
-def _(df_chunks):
-    # Collect the first chunk's vector to use as the query
-    _first_row = df_chunks.select("pk", "source", "vector").limit(1).collect()
-    query_pk = _first_row.to_pydict()["pk"][0]
-    query_source = _first_row.to_pydict()["source"][0]
-    query_vector = _first_row.to_pydict()["vector"][0]
+def _(daft, df_chunks_probe, df_chunks_query_vector):
+    # Resolve the first row from a narrow probe, then fetch its vector by PK.
+    _first_row = df_chunks_probe.limit(1).collect().to_pydict()
+    query_pk = _first_row["pk"][0]
+    query_source = _first_row["source"][0]
+    _vector_row = (
+        df_chunks_query_vector
+        .filter(daft.col("pk") == daft.lit(query_pk))
+        .limit(1)
+        .collect()
+        .to_pydict()
+    )
+    query_vector = _vector_row["vector"][0]
 
     print(f"Query chunk PK: {query_pk}")
     print(f"Query source: {query_source}")
@@ -196,13 +235,13 @@ def _(df_chunks):
 
 
 @app.cell
-def _(DataType, daft, df_chunks, query_pk, query_vector):
+def _(DataType, daft, df_chunks_similarity, query_pk, query_vector):
     # Build a fixed-size list literal for the query vector (dimension=2048)
     _query_lit = daft.lit(query_vector).cast(DataType.fixed_size_list(DataType.float32(), 2048))
 
     # Compute cosine similarity for every chunk
     df_similarity = (
-        df_chunks.select("pk", "source", "collection_name", "chunk_number", "raw_text", "vector")
+        df_chunks_similarity
         .with_column(
             "similarity",
             daft.col("vector").cosine_similarity(_query_lit),
