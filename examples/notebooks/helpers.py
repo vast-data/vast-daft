@@ -25,12 +25,10 @@ DEFAULT_PRODUCTS: list[str] = [
 DEFAULT_TIERS: list[str] = ["bronze", "silver", "gold", "platinum"]
 
 VAST_DAFT_DEPS: list[str] = [
-    "daft>=0.7.5",
+    f"daft[gravitino]=={daft.__version__}",
     "vastdb>=1.2",
     "pyiceberg[s3fs,sql-sqlite]>=0.11.1",
     "pyarrow>=15.0",
-    "ibis-framework>=9.0",
-    "sqlalchemy",
 ]
 
 SHARED_STORAGE_PATH: str = "/shared"

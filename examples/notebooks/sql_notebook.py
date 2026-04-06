@@ -8,12 +8,20 @@ app = marimo.App(width="medium")  # type: ignore
 def _(mo):
     mo.md(
         """
-        # VastDB SQL Queries via Daft SQL + Ray
+        # SQL Queries via Daft SQL + Ray
 
-        Run SQL queries against VastDB using native Daft SQL, with results
-        returned as Daft DataFrames distributed across Ray.
+        Run SQL queries using native Daft SQL, with results returned as Daft
+        DataFrames distributed across Ray.
 
         ## Catalog reference styles
+
+        **Unified Gravitino-backed mode** — the target path for federated queries:
+        ```sql
+        SELECT *
+        FROM lake.vastdb_catalog.sales.orders o
+        JOIN lake.iceberg_catalog.analytics.customers c
+          ON o.customer_id = c.customer_id
+        ```
 
         **Without alias** — use the catalog name as the SQL prefix (quoted if it contains `/`):
         ```sql
@@ -153,7 +161,9 @@ def _(mo):
         ## SQL Queries
 
         Edit the SQL below and run to see results.
-        Reference the table as `vastdb.<table_name>`.
+        The working demo below uses the direct native VastDB catalog
+        (`vastdb.<table_name>`). For federated queries, use a Gravitino-backed
+        alias such as `lake.<catalog>.<schema>.<table>`.
         """
     )
     return
@@ -194,6 +204,26 @@ def _(daft, sql_input, time):
 @app.cell
 def _(mo):
     mo.md("## More Query Examples")
+    return
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        """
+        ## Unified Gravitino SQL Examples
+
+        Canonical fully-qualified references for the unified path:
+
+        ```sql
+        SELECT * FROM lake.vastdb_catalog.sales.orders;
+        SELECT * FROM lake.iceberg_catalog.analytics.customers;
+        SELECT * FROM lake.vastdb_catalog.sales.orders o
+        JOIN lake.iceberg_catalog.analytics.customers c
+          ON o.customer_id = c.customer_id;
+        ```
+        """
+    )
     return
 
 

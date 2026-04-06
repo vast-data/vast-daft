@@ -10,7 +10,7 @@ def _(mo):
         """
         # Gravitino: Unified Catalog Browser
 
-        Browse **all** table types — VastDB native and Iceberg — through a single
+        Browse **all** table types — VastDB native, Iceberg, and external files — through a single
         Apache Gravitino catalog.  Tables are synced from VastDB by a background
         CronJob and can be queried transparently via `VastGravitinoCatalog`.
         """
@@ -181,19 +181,21 @@ def _(mo):
 
 
 @app.cell
-def _(GRAVITINO_ICEBERG_REST_URI, GRAVITINO_USERNAME, daft, get_s3_credentials, os):
+def _(GRAVITINO_ICEBERG_REST_URI, GRAVITINO_USERNAME, get_s3_credentials, os):
     from daft.io import IOConfig, S3Config
     from pyiceberg.catalog.rest import RestCatalog
 
     ENDPOINT = os.environ.get("VASTDB_ENDPOINT", "http://vippool.ie-dev-pipeline.svc.cluster.local")
+    _gravitino_user = GRAVITINO_USERNAME or "admin"
     ACCESS_KEY, SECRET_KEY = get_s3_credentials()
     BUCKET = os.environ.get("VASTDB_BUCKET", "collections-bucket")
 
     iceberg_catalog = RestCatalog(
         name="gravitino_iceberg",
         uri=GRAVITINO_ICEBERG_REST_URI,
-        warehouse="vastdb_catalog",
-        **{"header.X-Gravitino-User": GRAVITINO_USERNAME},
+        warehouse="",
+        auth={"type": "noop"},
+        **{"header.X-Gravitino-User": _gravitino_user},
     )
 
     io_config = IOConfig(
@@ -289,7 +291,63 @@ def _(daft, fqn, iceberg_catalog, io_config, mo):
 def _(mo):
     mo.md(
         """
-        ## Step 5 — Cross-backend join: VastDB orders x Iceberg products
+        ## Step 5 — Read an external Parquet file from Vast S3
+
+        Write a small Parquet dataset to Vast S3, then read it back directly
+        with Daft's native Parquet reader using the same `io_config` (S3
+        credentials from the environment).  This Parquet data is later joined
+        with the Iceberg product catalog in Step 6.
+        """
+    )
+    return
+
+
+@app.cell
+def _(
+    BUCKET,
+    daft,
+    io_config,
+    mo,
+):
+    import time as _time
+
+    _t0 = _time.perf_counter()
+    parquet_location = f"s3://{BUCKET}/gravitino-demo/parquet-product-prices/"
+
+    df_external = daft.from_pydict(
+        {
+            "product": ["Widget A", "Widget B", "Gadget X", "Module Pro"],
+            "price_band": ["mid", "mid", "premium", "premium"],
+            "list_price": [19.99, 24.99, 59.99, 49.99],
+        }
+    )
+    df_external.write_parquet(parquet_location, write_mode="overwrite", io_config=io_config)
+    _elapsed = _time.perf_counter() - _t0
+
+    mo.md(
+        f"""
+        **External Parquet write** completed in **{_elapsed:.2f}s**.
+
+        - Data files: Parquet on Vast S3 at `{parquet_location}`
+        - Writer: Daft native Parquet writer via `io_config`
+        """
+    )
+    return (parquet_location,)
+
+
+@app.cell
+def _(daft, io_config, mo, parquet_location):
+    df_parquet = daft.read_parquet(parquet_location, io_config=io_config)
+    df_parquet.show()
+    mo.md("Read back external Parquet data directly from Vast S3 via Daft.")
+    return (df_parquet,)
+
+
+@app.cell
+def _(mo):
+    mo.md(
+        """
+        ## Step 6 — Cross-backend join: VastDB orders x Iceberg products
 
         Join a **VastDB-native** table (read through Gravitino) with the
         **Iceberg** product catalog — both accessed from the same notebook.
@@ -302,18 +360,17 @@ def _(mo):
 def _(catalog, df_iceberg_read, mo):
     import time as _time
 
-    # Read VastDB orders through Gravitino
-    t0 = _time.perf_counter()
-    df_orders = catalog.get_table("vastdb_catalog.collections-schema.__xbackend_orders__").read()
+    _t0 = _time.perf_counter()
+    df_orders = catalog.get_table("vastdb_catalog.collections-schema.__sql_demo_orders__").read()
     df_joined = df_orders.join(df_iceberg_read, on="product", how="inner").select(
-        "order_id", "customer_id", "product", "category", "amount", "cost_price", "order_date"
+        "order_id", "customer_name", "product", "category", "amount", "cost_price", "order_date"
     )
     df_joined.limit(10).show()
-    elapsed = _time.perf_counter() - t0
+    _elapsed = _time.perf_counter() - _t0
 
     mo.md(
         f"""
-        **Cross-backend join** completed in **{elapsed:.2f}s**.
+        **Cross-backend join** completed in **{_elapsed:.2f}s**.
 
         - Orders: VastDB native (via Gravitino `vast.table-format=vastdb`)
         - Products: Iceberg on VastDB S3 (via Gravitino Iceberg REST)
@@ -330,9 +387,10 @@ def _(mo):
         ---
         ## Summary
 
-        - **Gravitino Web UI** shows all VastDB + Iceberg tables in one tree
+        - **Gravitino Web UI** shows VastDB, Iceberg, and external file-backed tables in one tree
         - **VastGravitinoCatalog** routes `vast.table-format=vastdb` tables through the native SDK
         - **Iceberg tables** are created/read via Gravitino's Iceberg REST service
+        - **External Parquet/CSV/JSON tables** are read via Daft native file readers
         - **Cross-backend joins** work seamlessly — Daft handles the federation
         - **Sync CronJob** keeps VastDB metadata in sync with Gravitino every 5 minutes
         """
