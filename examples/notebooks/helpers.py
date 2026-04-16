@@ -25,7 +25,7 @@ DEFAULT_PRODUCTS: list[str] = [
 DEFAULT_TIERS: list[str] = ["bronze", "silver", "gold", "platinum"]
 
 VAST_DAFT_DEPS: list[str] = [
-    f"daft[gravitino]=={daft.__version__}",
+    f"daft[gravitino,lance]=={daft.__version__}",
     "vastdb>=1.2",
     "pyiceberg[s3fs,sql-sqlite]>=0.11.1",
     "pyarrow>=15.0",
