@@ -275,7 +275,7 @@ def _(
             ("customer_id", pa.int64()),
             ("product", pa.string()),
             ("amount", pa.float64()),
-            ("order_date", pa.string()),
+            ("order_date", pa.date32()),
         ]
     )
 

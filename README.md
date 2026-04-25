@@ -120,9 +120,9 @@ config = VastDBConfig.from_env()
 | `VASTDB_SCHEMA` | Yes | Schema name |
 | `VASTDB_SSL_VERIFY` | No | `true`/`false` (default `true`) |
 
-## Deployment (Kubernetes + Ray + Marimo)
+## Deployment (Kubernetes + Ray + Marimo + Zeppelin)
 
-Deploy a Ray cluster and Marimo notebook server on Kubernetes:
+Deploy a Ray cluster plus Marimo and Zeppelin notebook servers on Kubernetes:
 
 1. Copy `.env.example` to a cluster-specific file (e.g. `.env.v141`) and fill in credentials and endpoints.
 2. Deploy:
@@ -134,11 +134,13 @@ make deploy CLUSTER_ENV=.env.v141
 This builds a wheel, creates the K8s secret from `CLUSTER_ENV`, and deploys via Helm:
 - **Ray cluster** (1 head + 2 workers) via KubeRay operator
 - **Marimo notebook** server for interactive development
+- **Apache Zeppelin** server for paragraph-based notebooks
 - **Ingress** for browser access (nginx), with hostnames derived from `CLUSTER_DOMAIN`
 
 | Service | URL pattern |
 |---------|-------------|
 | Marimo notebook | `http://marimo.<namespace>.<CLUSTER_DOMAIN>` |
+| Zeppelin notebook | `http://zeppelin.<namespace>.<CLUSTER_DOMAIN>` |
 | Ray dashboard | `http://ray-dashboard.<namespace>.<CLUSTER_DOMAIN>` |
 
 ### Using Ray from Marimo
@@ -162,6 +164,8 @@ make build      # Build Docker image only
 make push       # Build + push to Zarf registry
 make status     # Show pods, services, ingress
 make logs       # Tail marimo logs
+make zeppelin-logs  # Tail Zeppelin logs
+make test-zeppelin  # Import and run Zeppelin validation notes
 make undeploy   # Remove Helm release (keeps operator)
 make clean      # Remove everything including namespace
 ```

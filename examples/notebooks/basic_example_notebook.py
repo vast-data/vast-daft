@@ -1,22 +1,20 @@
-import marimo  # type: ignore
+import marimo
 
-__generated_with = "0.13.0"
+__generated_with = "0.23.3"
 app = marimo.App(width="medium")
 
 
 @app.cell
 def _(mo):
-    mo.md(
-        """
-        # VastDB + Daft Basic Example
+    mo.md("""
+    # VastDB + Daft Basic Example
 
-        Distributed read/write on a Ray cluster via Marimo.
+    Distributed read/write on a Ray cluster via Marimo.
 
-        This notebook generates random customer and order data, writes to VastDB,
-        reads back, joins, computes aggregates, and cleans up — all distributed
-        across the Ray cluster.
-        """
-    )
+    This notebook generates random customer and order data, writes to VastDB,
+    reads back, joins, computes aggregates, and cleans up — all distributed
+    across the Ray cluster.
+    """)
     return
 
 
@@ -81,7 +79,7 @@ def _(VastDBCatalog, VastDBConfig, get_s3_credentials, os):
         ssl_verify=False,
     )
     catalog = VastDBCatalog(config)
-    return BUCKET, SCHEMA, ACCESS_KEY, SECRET_KEY, ENDPOINT, catalog, config
+    return catalog, config
 
 
 @app.cell
@@ -113,7 +111,7 @@ def _(pa):
             ("customer_id", pa.int64()),
             ("product", pa.string()),
             ("amount", pa.float64()),
-            ("order_date", pa.string()),
+            ("order_date", pa.date32()),
         ]
     )
 
@@ -126,15 +124,24 @@ def _(pa):
             ("order_id", pa.int64()),
             ("product", pa.string()),
             ("amount", pa.float64()),
-            ("order_date", pa.string()),
+            ("order_date", pa.date32()),
         ]
     )
-    return CUSTOMERS_SCHEMA, CUSTOMERS_TABLE, JOINED_SCHEMA, JOINED_TABLE, ORDERS_SCHEMA, ORDERS_TABLE
+    return (
+        CUSTOMERS_SCHEMA,
+        CUSTOMERS_TABLE,
+        JOINED_SCHEMA,
+        JOINED_TABLE,
+        ORDERS_SCHEMA,
+        ORDERS_TABLE,
+    )
 
 
 @app.cell
 def _(mo):
-    mo.md("## Step 1 — Generate Data")
+    mo.md("""
+    ## Step 1 — Generate Data
+    """)
     return
 
 
@@ -156,12 +163,23 @@ def _(NUM_CUSTOMERS, NUM_ORDERS, generate_orders):
 
 @app.cell
 def _(mo):
-    mo.md("## Step 2 — Write to VastDB")
+    mo.md("""
+    ## Step 2 — Write to VastDB
+    """)
     return
 
 
 @app.cell
-def _(CUSTOMERS_SCHEMA, CUSTOMERS_TABLE, VastDBDataSink, catalog, config, customers_data, daft, time):
+def _(
+    CUSTOMERS_SCHEMA,
+    CUSTOMERS_TABLE,
+    VastDBDataSink,
+    catalog,
+    config,
+    customers_data,
+    daft,
+    time,
+):
     catalog.drop_table(CUSTOMERS_TABLE)
 
     _t0 = time.perf_counter()
@@ -175,11 +193,20 @@ def _(CUSTOMERS_SCHEMA, CUSTOMERS_TABLE, VastDBDataSink, catalog, config, custom
     df_customers.write_sink(_sink).show()
     _elapsed = time.perf_counter() - _t0
     print(f"Wrote customers in {_elapsed:.2f}s")
-    return (df_customers,)
+    return
 
 
 @app.cell
-def _(ORDERS_SCHEMA, ORDERS_TABLE, VastDBDataSink, catalog, config, daft, orders_data, time):
+def _(
+    ORDERS_SCHEMA,
+    ORDERS_TABLE,
+    VastDBDataSink,
+    catalog,
+    config,
+    daft,
+    orders_data,
+    time,
+):
     catalog.drop_table(ORDERS_TABLE)
 
     _t0 = time.perf_counter()
@@ -193,12 +220,14 @@ def _(ORDERS_SCHEMA, ORDERS_TABLE, VastDBDataSink, catalog, config, daft, orders
     df_orders.write_sink(_sink).show()
     _elapsed = time.perf_counter() - _t0
     print(f"Wrote orders in {_elapsed:.2f}s")
-    return (df_orders,)
+    return
 
 
 @app.cell
 def _(mo):
-    mo.md("## Step 3 — Read Back (Split Across Workers)")
+    mo.md("""
+    ## Step 3 — Read Back (Split Across Workers)
+    """)
     return
 
 
@@ -236,12 +265,14 @@ def _(ORDERS_SCHEMA, ORDERS_TABLE, VastDBDataSource, config, time):
 
 @app.cell
 def _(mo):
-    mo.md("## Step 4 — Join Customers x Orders")
+    mo.md("""
+    ## Step 4 — Join Customers x Orders
+    """)
     return
 
 
 @app.cell
-def _(daft, df_customers_read, df_orders_read, time):
+def _(df_customers_read, df_orders_read, time):
     _t0 = time.perf_counter()
     df_joined = df_customers_read.join(df_orders_read, on="customer_id", how="inner").select(
         "customer_id", "name", "email", "tier", "order_id", "product", "amount", "order_date"
@@ -254,7 +285,9 @@ def _(daft, df_customers_read, df_orders_read, time):
 
 @app.cell
 def _(mo):
-    mo.md("## Step 5 — Aggregations")
+    mo.md("""
+    ## Step 5 — Aggregations
+    """)
     return
 
 
@@ -273,7 +306,7 @@ def _(daft, df_joined, time):
     df_by_tier.show()
     _elapsed = time.perf_counter() - _t0
     print(f"Revenue by tier in {_elapsed:.2f}s")
-    return (df_by_tier,)
+    return
 
 
 @app.cell
@@ -291,17 +324,28 @@ def _(daft, df_joined, time):
     df_top_customers.show()
     _elapsed = time.perf_counter() - _t0
     print(f"Top 10 customers in {_elapsed:.2f}s")
-    return (df_top_customers,)
-
-
-@app.cell
-def _(mo):
-    mo.md("## Step 6 — Write Joined Result Back")
     return
 
 
 @app.cell
-def _(JOINED_SCHEMA, JOINED_TABLE, VastDBDataSink, VastDBDataSource, catalog, config, df_joined, time):
+def _(mo):
+    mo.md("""
+    ## Step 6 — Write Joined Result Back
+    """)
+    return
+
+
+@app.cell
+def _(
+    JOINED_SCHEMA,
+    JOINED_TABLE,
+    VastDBDataSink,
+    VastDBDataSource,
+    catalog,
+    config,
+    df_joined,
+    time,
+):
     catalog.drop_table(JOINED_TABLE)
 
     _t0 = time.perf_counter()
@@ -323,7 +367,9 @@ def _(JOINED_SCHEMA, JOINED_TABLE, VastDBDataSink, VastDBDataSource, catalog, co
 
 @app.cell
 def _(mo):
-    mo.md("## Step 7 — Predicate Pushdown Queries")
+    mo.md("""
+    ## Step 7 — Predicate Pushdown Queries
+    """)
     return
 
 
@@ -400,7 +446,9 @@ def _(JOINED_SCHEMA, JOINED_TABLE, VastDBDataSource, config, daft, time):
 
 @app.cell
 def _(mo):
-    mo.md("## Cleanup")
+    mo.md("""
+    ## Cleanup
+    """)
     return
 
 

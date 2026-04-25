@@ -36,15 +36,17 @@ def _():
     import time
 
     import daft
-    from helpers import configure_daft_runner, get_s3_credentials, make_shared_iceberg_catalog  # type: ignore
+    from helpers import configure_daft_runner, generate_orders, get_s3_credentials, make_shared_iceberg_catalog  # type: ignore
 
-    from vast_daft import VastDBCatalog, VastDBConfig
+    from vast_daft import VastDBCatalog, VastDBConfig, VastDBDataSink
 
     return (
         VastDBCatalog,
         VastDBConfig,
+        VastDBDataSink,
         configure_daft_runner,
         daft,
+        generate_orders,
         get_s3_credentials,
         make_shared_iceberg_catalog,
         os,
@@ -98,7 +100,94 @@ def _(VastDBCatalog, VastDBConfig, daft, get_s3_credentials, make_shared_iceberg
         ORDERS_TABLE,
         PRODUCTS_TABLE,
         sess,
+        vastdb_catalog,
+        vastdb_config,
     )
+
+
+# ---------------------------------------------------------------------------
+# Data generation — create orders table if it doesn't exist
+# ---------------------------------------------------------------------------
+
+
+@app.cell
+def _(mo):
+    FORCE_RECREATE = mo.ui.checkbox(label="Force recreate orders table (drop + regenerate)")
+    FORCE_RECREATE
+    return (FORCE_RECREATE,)
+
+
+@app.cell
+def _(FORCE_RECREATE, ORDERS_TABLE, VastDBDataSink, daft, generate_orders, mo, vastdb_catalog, vastdb_config):
+    import time as _time
+    import pyarrow as pa
+
+    _TOTAL_ROWS = 350_000_000
+    _BATCH_SIZE = 5_000_000
+    _NUM_CUSTOMERS = 100_000
+    _NUM_BATCHES = _TOTAL_ROWS // _BATCH_SIZE
+    # Split each batch into N partitions so the write fans out across Ray workers
+    # instead of bottlenecking on one. Tune to ~total cluster CPUs.
+    _NUM_PARTITIONS = 8
+
+    _ORDERS_SCHEMA = pa.schema([
+        ("order_id", pa.int64()),
+        ("customer_id", pa.int64()),
+        ("product", pa.string()),
+        ("amount", pa.float64()),
+        ("order_date", pa.date32()),
+    ])
+
+    try:
+        vastdb_catalog.get_table(ORDERS_TABLE)
+        _exists = True
+    except Exception:
+        _exists = False
+
+    if _exists and not FORCE_RECREATE.value:
+        mo.stop(True, mo.md(f"Orders table **{ORDERS_TABLE}** already exists — skipping generation. Check *Force recreate* to drop and regenerate."))
+
+    if _exists and FORCE_RECREATE.value:
+        vastdb_catalog.drop_table(ORDERS_TABLE)
+        print(f"Dropped existing table '{ORDERS_TABLE}'")
+
+    print(f"Generating {_TOTAL_ROWS:,} orders in {_NUM_BATCHES} batches of {_BATCH_SIZE:,} rows × {_NUM_PARTITIONS} partitions each...")
+    print(f"{'Batch':>6}  {'gen_ms':>8}  {'arrow_ms':>9}  {'write_ms':>9}  {'total_ms':>9}  {'rows_written':>14}")
+    print("-" * 66)
+
+    _t_run = _time.perf_counter()
+    for _i in range(_NUM_BATCHES):
+        _t0 = _time.perf_counter()
+        _batch = generate_orders(
+            _BATCH_SIZE,
+            _NUM_CUSTOMERS,
+            seed=_i,
+            start_id=_i * _BATCH_SIZE + 1,
+        )
+        _t_gen = _time.perf_counter()
+
+        _df = daft.from_arrow(_batch).into_partitions(_NUM_PARTITIONS)
+        _t_arrow = _time.perf_counter()
+
+        _sink = VastDBDataSink(
+            config=vastdb_config,
+            table_name=ORDERS_TABLE,
+            table_schema=_ORDERS_SCHEMA,
+            create_if_missing=True,
+        )
+        _df.write_sink(_sink)
+        _t_write = _time.perf_counter()
+
+        _gen_ms   = (_t_gen   - _t0)     * 1000
+        _arrow_ms = (_t_arrow - _t_gen)  * 1000
+        _write_ms = (_t_write - _t_arrow) * 1000
+        _total_ms = (_t_write - _t0)     * 1000
+        _rows_so_far = (_i + 1) * _BATCH_SIZE
+        print(f"{_i + 1:>6}  {_gen_ms:>8.0f}  {_arrow_ms:>9.0f}  {_write_ms:>9.0f}  {_total_ms:>9.0f}  {_rows_so_far:>14,}")
+
+    _elapsed = _time.perf_counter() - _t_run
+    print(f"\nDone — {_TOTAL_ROWS:,} rows in {_elapsed:.1f}s ({_TOTAL_ROWS / _elapsed / 1e6:.2f}M rows/s)")
+    return
 
 
 # ---------------------------------------------------------------------------
