@@ -1,8 +1,8 @@
 # Daft + VastDB + Iceberg: 350M Rows, One DataFrame API
 
-I wanted one notebook. Open it, query an operational table in VastDB, join it to an Iceberg table on VAST S3, and run the whole thing distributed on Ray — without juggling three APIs.
+I wanted one notebook. Open it, query an operational table in VastDB, join it to Iceberg data on VAST S3 when needed, and run the whole thing distributed on Ray — without juggling three APIs.
 
-It works. A 350M-row VastDB orders table, joined to a VastDB products table and an Iceberg customers table, materializes business aggregations in **3.4–4.0 seconds**. The query is plain Daft DataFrame code; the storage layer still gets metadata counts, predicate pushdown, projection pushdown, and split-based parallel reads.
+It works. A 350M-row VastDB orders table joined to a VastDB products table materializes a full-table business aggregation in **6.27s**. Add a predicate that keeps about 20% of the rows, and the same aggregation finishes in **3.76s**. The query is plain Daft DataFrame code; the storage layer still gets metadata counts, predicate pushdown, projection pushdown, and split-based parallel reads.
 
 (This is not "VastDB beats Parquet." That is a different post. This one is about the integration actually doing its job.)
 
@@ -41,7 +41,7 @@ The benchmark models a small commerce workload:
 - `products`: 10 rows in VastDB
 - `customers`: 10,000 rows in Iceberg on VAST S3
 
-The query joins orders to products, computes gross margin as `amount - cost_price`, and in two of the queries also joins customers to break results down by customer tier.
+The main benchmark joins orders to products and computes gross margin as `amount - cost_price`. The notebook also attaches an Iceberg customers table for cross-backend queries that need customer attributes.
 
 (Yes, 10 products and 10K customers against 350M orders is lopsided on purpose. The point is the 350M side; products and customers are there to make the joins real.)
 
@@ -92,7 +92,7 @@ And the aggregations are normal DataFrame operations:
 
 ```python
 margin_by_category = (
-    full
+    enriched
     .with_column("margin", daft.col("amount") - daft.col("cost_price"))
     .groupby("category")
     .agg(
@@ -160,34 +160,14 @@ Table sizes:
 
 Materialized query results:
 
-| Query | What it does | Time |
-|---|---|---:|
-| Product-category margin | Join orders + products, compute margin, aggregate by product category | 4.01s |
-| Tier/category margin | Join orders + products + customers, compute margin, aggregate by customer tier and product category | 3.44s |
-| Top customers | Join orders + customers, aggregate spend per customer, return top 20 | 3.47s |
+| Query | Rows reaching aggregate | Time |
+|---|---:|---:|
+| Join all orders + products, compute margin, aggregate by product category | 350,000,000 | 6.273s |
+| Push down `amount >= 401`, join orders + products, aggregate by product category | 69,994,609 | 3.757s |
 
-## A smaller query: filter then group by
+The second query keeps almost exactly **20%** of the orders. It is not 5x faster, because there is still fixed Ray, join, and aggregation work, but the predicate eliminates about **280M rows** before they leave VastDB and cuts wall time by about **40%**.
 
-Full-table joins are useful, but the more common notebook pattern is "filter first, then aggregate." That is where storage-side pushdown earns its keep — the predicate runs on the VastDB side, so the rows that fail the filter never leave the database:
-
-```python
-high_value_by_category = (
-    orders
-    .where(daft.col("amount") > 400)
-    .join(products, on="product", how="inner", strategy="broadcast")
-    .with_column("margin", daft.col("amount") - daft.col("cost_price"))
-    .groupby("category")
-    .agg(
-        daft.col("margin").sum().alias("total_margin"),
-        daft.col("order_id").count().alias("order_count"),
-    )
-    .sort("total_margin", desc=True)
-)
-```
-
-On the same 350M-row VastDB orders table, `amount > 400` keeps about **70.7M rows (20.2%)**. The full pipeline — predicate, broadcast join to products, margin computation, groupby category, sort — runs in **~3.4s** (median of three runs after warmup; min 3.32s, max 3.64s). Same cluster, same Ray topology as the earlier table.
-
-That is in the same neighborhood as the full-table aggregations in the previous section, despite scanning 5× fewer rows after the filter. The predicate saves real scan and shuffle work, but the join-plus-aggregate cost is what dominates either way.
+The filtered query is the more common notebook shape: filter first, then aggregate. That is where storage-side pushdown earns its keep — the predicate runs on the VastDB side, so the rows that fail the filter never leave the database.
 
 ## Why a catalog, not a reader function
 

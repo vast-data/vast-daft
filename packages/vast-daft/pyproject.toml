@@ -24,7 +24,7 @@ dev = [
   "python-dotenv>=1.0",
   # Runtime deps for local development (type hints, IDE autocomplete).
   # Not in [project].dependencies to avoid Ray py_modules shadowing.
-  "daft==0.7.10.dev58+g9c99919f9",
+  "daft==0.7.10",
   "numpy<2",
   "ray==2.53.0",
   "pylance>=0.39.0",
