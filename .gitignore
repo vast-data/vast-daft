@@ -38,3 +38,6 @@ htmlcov/
 .env
 .env.*
 !.env.example
+
+# Local example data (Lance datasets, downloaded corpora)
+data/
