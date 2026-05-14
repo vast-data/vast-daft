@@ -59,20 +59,20 @@ def _():
     from vast_daft import (
         VastDBCatalog,
         VastDBConfig,
-        VastDBDataSink,
     )
+    import vast_daft
 
     return (
         DEFAULT_TIERS,
         VastDBCatalog,
         VastDBConfig,
-        VastDBDataSink,
         configure_daft_runner,
         daft,
         get_s3_credentials,
         os,
         pa,
         time,
+        vast_daft,
     )
 
 
@@ -110,7 +110,7 @@ def _(mo):
 
 
 @app.cell
-def _(CATALOG_ALIAS, DEFAULT_TIERS, VastDBDataSink, catalog, config, daft, pa, time):
+def _(CATALOG_ALIAS, DEFAULT_TIERS, catalog, config, daft, pa, time, vast_daft):
     DEMO_TABLE = "__sql_demo_orders__"
 
     _t0 = time.perf_counter()
@@ -147,8 +147,7 @@ def _(CATALOG_ALIAS, DEFAULT_TIERS, VastDBDataSink, catalog, config, daft, pa, t
         }
     )
 
-    _sink = VastDBDataSink(config=config, table_name=DEMO_TABLE, table_schema=ORDERS_SCHEMA, create_if_missing=True)
-    df_seed.write_sink(_sink).show()
+    df_seed.write_vastdb(config=config, table_name=DEMO_TABLE, table_schema=ORDERS_SCHEMA, create_if_missing=True).show()
     print(f"Seeded {_n:,} rows in {time.perf_counter() - _t0:.2f}s")
     print(f"Query tables as: {CATALOG_ALIAS}.{DEMO_TABLE}")
     return CATALOG_ALIAS, DEMO_TABLE, ORDERS_SCHEMA, df_seed

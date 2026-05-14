@@ -38,10 +38,10 @@ import pyarrow as pa
 from daft import col, lit
 from dotenv import load_dotenv
 
+import vast_daft
 from vast_daft import (
     VastDBCatalog,
     VastDBConfig,
-    VastDBDataSink,
     VastDBDataSource,
 )
 
@@ -118,13 +118,12 @@ def demo_pushdown(config: VastDBConfig, catalog: VastDBCatalog) -> None:
             "score": [0.1, 0.2, 0.3, 0.4, 0.5],
         }
     )
-    sink = VastDBDataSink(
+    df.write_vastdb(
         config=config,
         table_name=demo_table,
         table_schema=demo_schema,
         create_if_missing=True,
     )
-    df.write_sink(sink)
     print(f"  Wrote 5 rows to {demo_table!r}")
 
     def _check(label: str, result_df, expected_rows: int) -> None:
@@ -244,22 +243,17 @@ def demo_write(config: VastDBConfig, catalog: VastDBCatalog) -> None:
     print("  Data to write:")
     df.show()
 
-    sink = VastDBDataSink(
+    result = df.write_vastdb(
         config=config,
         table_name=demo_table,
         table_schema=demo_schema,
         create_if_missing=True,
     )
-    result = df.write_sink(sink)
     print("  Write result:")
     result.show()
 
     print("  Reading back:")
-    VastDBDataSource(
-        config=config,
-        table_name=demo_table,
-        table_schema=demo_schema,
-    ).read().show()
+    vast_daft.read_vastdb(config=config, table_name=demo_table).show()
 
     catalog.drop_table(demo_table)
     print(f"  Cleaned up {demo_table!r}")
@@ -299,14 +293,13 @@ def demo_mode2(access_key: str, secret_key: str) -> None:
 
     # Write via DataSink with explicit schema kwarg
     df = daft.from_pydict({"id": [10, 20], "label": ["x", "y"]})
-    sink = VastDBDataSink(
+    df.write_vastdb(
         config=config,
         table_name=demo_table,
         table_schema=demo_schema,
         schema=SCHEMA,  # schema supplied explicitly
         create_if_missing=False,
-    )
-    df.write_sink(sink).show()
+    ).show()
 
     # Read via catalog using "schema.table"
     print(f"  Reading {full_ident!r}:")
@@ -352,15 +345,14 @@ def demo_mode3(access_key: str, secret_key: str) -> None:
 
     # Write via DataSink with both bucket and schema kwarg
     df = daft.from_pydict({"id": [1], "value": [3.14]})
-    sink = VastDBDataSink(
+    df.write_vastdb(
         config=config,
         table_name=demo_table,
         table_schema=demo_schema,
         bucket=BUCKET,
         schema=SCHEMA,
         create_if_missing=False,
-    )
-    df.write_sink(sink).show()
+    ).show()
 
     print(f"  Reading {full_ident!r}:")
     catalog.read_table(full_ident).show()

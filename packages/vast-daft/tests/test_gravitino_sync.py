@@ -4,8 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from vast_daft.gravitino_sync import GravitinoAPI
-from vast_daft.gravitino_sync import _parse_external_tables_json
+from vast_daft.gravitino_sync import GravitinoAPI, _parse_external_tables_json
 
 
 class _DummyResponse:

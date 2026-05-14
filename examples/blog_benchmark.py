@@ -14,7 +14,8 @@ from pyiceberg.catalog.sql import SqlCatalog
 from pyiceberg.schema import Schema as IcebergSchema
 from pyiceberg.types import DoubleType, LongType, NestedField, StringType
 
-from vast_daft import VastDBCatalog, VastDBConfig, VastDBDataSink
+import vast_daft
+from vast_daft import VastDBCatalog, VastDBConfig
 
 
 ORDER_ROWS = int(os.environ.get("BLOG_ORDER_ROWS", "2000000"))
@@ -98,13 +99,7 @@ def _generate_customers() -> pa.Table:
 def _write_vast_table(config: VastDBConfig, catalog: VastDBCatalog, name: str, table: pa.Table) -> None:
     catalog.drop_table_if_exists(name)
     catalog.create_table_if_not_exists(name, Schema.from_pyarrow_schema(table.schema))
-    daft.from_arrow(table).write_sink(
-        VastDBDataSink(
-            config=config,
-            table_name=name,
-            table_schema=table.schema,
-        )
-    )
+    daft.from_arrow(table).write_vastdb(config=config, table_name=name, table_schema=table.schema)
 
 
 def main() -> None:

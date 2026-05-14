@@ -26,11 +26,10 @@ import time
 import daft
 import pyarrow as pa
 
+import vast_daft
 from vast_daft import (
     VastDBCatalog,
     VastDBConfig,
-    VastDBDataSink,
-    VastDBDataSource,
 )
 
 # ---------------------------------------------------------------------------
@@ -222,13 +221,12 @@ def main() -> None:
         df_customers = daft.from_pydict(customers_data)
 
     with timed(f"Write customers to VastDB ({CUSTOMERS_TABLE})"):
-        sink = VastDBDataSink(
+        result = df_customers.write_vastdb(
             config=config,
             table_name=CUSTOMERS_TABLE,
             table_schema=CUSTOMERS_SCHEMA,
             create_if_missing=True,
         )
-        result = df_customers.write_sink(sink)
         result.show()
 
     # ------------------------------------------------------------------
@@ -239,36 +237,31 @@ def main() -> None:
         df_orders = daft.from_pydict(orders_data)
 
     with timed(f"Write orders to VastDB ({ORDERS_TABLE})"):
-        sink = VastDBDataSink(
+        result = df_orders.write_vastdb(
             config=config,
             table_name=ORDERS_TABLE,
             table_schema=ORDERS_SCHEMA,
             create_if_missing=True,
         )
-        result = df_orders.write_sink(sink)
         result.show()
 
     # ------------------------------------------------------------------
     # Step 3: Read back from VastDB
     # ------------------------------------------------------------------
     with timed("Read customers from VastDB (split across workers)"):
-        src = VastDBDataSource(
+        df_customers_read = vast_daft.read_vastdb(
             config=config,
             table_name=CUSTOMERS_TABLE,
-            table_schema=CUSTOMERS_SCHEMA,
             num_splits=4,
         )
-        df_customers_read = src.read()
         print("  (lazy — 4 splits will distribute across Ray workers)")
 
     with timed("Read orders from VastDB (split across workers)"):
-        src = VastDBDataSource(
+        df_orders_read = vast_daft.read_vastdb(
             config=config,
             table_name=ORDERS_TABLE,
-            table_schema=ORDERS_SCHEMA,
             num_splits=4,
         )
-        df_orders_read = src.read()
         print("  (lazy — 4 splits will distribute across Ray workers)")
 
     # ------------------------------------------------------------------
@@ -323,47 +316,29 @@ def main() -> None:
     # Step 6: Write joined result back to VastDB
     # ------------------------------------------------------------------
     with timed(f"Write joined result to VastDB ({JOINED_TABLE})"):
-        sink = VastDBDataSink(
+        result = df_joined.write_vastdb(
             config=config,
             table_name=JOINED_TABLE,
             table_schema=JOINED_SCHEMA,
             create_if_missing=True,
         )
-        result = df_joined.write_sink(sink)
         result.show()
 
     with timed("Verify: read joined result back"):
-        src = VastDBDataSource(
-            config=config,
-            table_name=JOINED_TABLE,
-            table_schema=JOINED_SCHEMA,
-        )
-        src.read().limit(10).show()
+        vast_daft.read_vastdb(config=config, table_name=JOINED_TABLE).limit(10).show()
 
     # ------------------------------------------------------------------
     # Step 6b: Predicate pushdown queries (Daft native filters, pushed down automatically)
     # ------------------------------------------------------------------
     # Query 1: Filter customers by tier (Daft native .filter())
     with timed("Predicate: customers WHERE tier = 'platinum'"):
-        src = VastDBDataSource(
-            config=config,
-            table_name=CUSTOMERS_TABLE,
-            table_schema=CUSTOMERS_SCHEMA,
-            num_splits=4,
-        )
-        df_plat = src.read().filter(daft.col("tier") == daft.lit("platinum")).collect()
+        df_plat = vast_daft.read_vastdb(config=config, table_name=CUSTOMERS_TABLE, num_splits=4).filter(daft.col("tier") == daft.lit("platinum")).collect()
         print(f"  Platinum customers: {len(df_plat):,} rows")
 
     # Query 2: Filter orders by amount range (Daft native .filter())
     with timed("Predicate: orders WHERE amount BETWEEN 200 AND 500"):
-        src = VastDBDataSource(
-            config=config,
-            table_name=ORDERS_TABLE,
-            table_schema=ORDERS_SCHEMA,
-            num_splits=4,
-        )
         df_high = (
-            src.read()
+            vast_daft.read_vastdb(config=config, table_name=ORDERS_TABLE, num_splits=4)
             .filter((daft.col("amount") >= daft.lit(200.0)) & (daft.col("amount") <= daft.lit(500.0)))
             .collect()
         )
@@ -371,14 +346,8 @@ def main() -> None:
 
     # Query 3: Filter joined table — compound predicate (Daft native .filter())
     with timed("Predicate: joined WHERE tier IN ('gold','platinum') AND amount >= 300"):
-        src = VastDBDataSource(
-            config=config,
-            table_name=JOINED_TABLE,
-            table_schema=JOINED_SCHEMA,
-            num_splits=4,
-        )
         df_vip = (
-            src.read()
+            vast_daft.read_vastdb(config=config, table_name=JOINED_TABLE, num_splits=4)
             .filter(daft.col("tier").is_in(["gold", "platinum"]) & (daft.col("amount") >= daft.lit(300.0)))
             .collect()
         )
@@ -386,25 +355,13 @@ def main() -> None:
 
     # Query 4: Column projection — read only 2 columns from joined table
     with timed("Projection: joined — only (customer_id, amount)"):
-        src = VastDBDataSource(
-            config=config,
-            table_name=JOINED_TABLE,
-            table_schema=JOINED_SCHEMA,
-            num_splits=4,
-        )
-        df_proj = src.read().select(daft.col("customer_id"), daft.col("amount")).collect()
+        df_proj = vast_daft.read_vastdb(config=config, table_name=JOINED_TABLE, num_splits=4).select(daft.col("customer_id"), daft.col("amount")).collect()
         print(f"  Projected rows: {len(df_proj):,} rows")
 
     # Query 5: Predicate + projection combined (Daft native .filter() + column selection)
     with timed("Predicate+Projection: joined WHERE tier='gold', cols=(name, amount)"):
-        src = VastDBDataSource(
-            config=config,
-            table_name=JOINED_TABLE,
-            table_schema=JOINED_SCHEMA,
-            num_splits=4,
-        )
         df_combo = (
-            src.read()
+            vast_daft.read_vastdb(config=config, table_name=JOINED_TABLE, num_splits=4)
             .select(daft.col("name"), daft.col("amount"), daft.col("tier"))
             .filter(daft.col("tier") == daft.lit("gold"))
             .collect()

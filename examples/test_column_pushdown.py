@@ -11,7 +11,8 @@ import ray
 from daft.schema import Schema
 from dotenv import load_dotenv
 
-from vast_daft import VastDBCatalog, VastDBConfig, VastDBDataSink
+import vast_daft
+from vast_daft import VastDBCatalog, VastDBConfig
 
 EXPECTED_DAFT_VERSION = "0.7.10-dev58+g9c99919f9"
 DAFT_PIP_VERSION = "0.7.10.dev58+g9c99919f9"
@@ -47,13 +48,7 @@ def _write_table(config: VastDBConfig, catalog: VastDBCatalog, table_name: str, 
     table = pa.table(data)
     catalog.drop_table_if_exists(table_name)
     catalog.create_table_if_not_exists(table_name, Schema.from_pyarrow_schema(table.schema))
-    daft.from_arrow(table).write_sink(
-        VastDBDataSink(
-            config,
-            table_name,
-            table.schema,
-        )
-    )
+    daft.from_arrow(table).write_vastdb(config=config, table_name=table_name, table_schema=table.schema)
 
 
 def main() -> None:

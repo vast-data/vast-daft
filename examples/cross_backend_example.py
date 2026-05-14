@@ -31,11 +31,10 @@ from pyiceberg.catalog.sql import SqlCatalog
 from pyiceberg.schema import Schema as IcebergSchema
 from pyiceberg.types import DoubleType, LongType, NestedField, StringType
 
+import vast_daft
 from vast_daft import (
     VastDBCatalog,
     VastDBConfig,
-    VastDBDataSink,
-    VastDBDataSource,
 )
 
 # ---------------------------------------------------------------------------
@@ -305,13 +304,12 @@ def main() -> None:
         df_orders = daft.from_pydict(generate_orders(NUM_ORDERS, NUM_CUSTOMERS))
 
     with timed("Write orders to VastDB"):
-        sink = VastDBDataSink(
+        df_orders.write_vastdb(
             config=config,
             table_name=VASTDB_ORDERS_TABLE,
             table_schema=ORDERS_SCHEMA,
             create_if_missing=True,
-        )
-        df_orders.write_sink(sink).show()
+        ).show()
 
     # ==================================================================
     # STEP 2: Write customers to VastDB
@@ -320,13 +318,12 @@ def main() -> None:
         df_customers = daft.from_pydict(generate_customers(NUM_CUSTOMERS))
 
     with timed("Write customers to VastDB"):
-        sink = VastDBDataSink(
+        df_customers.write_vastdb(
             config=config,
             table_name=VASTDB_CUSTOMERS_TABLE,
             table_schema=CUSTOMERS_SCHEMA,
             create_if_missing=True,
-        )
-        df_customers.write_sink(sink).show()
+        ).show()
 
     # ==================================================================
     # STEP 3: Write product catalog to Iceberg
@@ -349,21 +346,19 @@ def main() -> None:
     # STEP 4: Read orders + customers from VastDB
     # ==================================================================
     with timed("Read orders from VastDB (4 splits)"):
-        df_orders_read = VastDBDataSource(
+        df_orders_read = vast_daft.read_vastdb(
             config=config,
             table_name=VASTDB_ORDERS_TABLE,
-            table_schema=ORDERS_SCHEMA,
             num_splits=4,
-        ).read()
+        )
         print("  (lazy)")
 
     with timed("Read customers from VastDB (4 splits)"):
-        df_customers_read = VastDBDataSource(
+        df_customers_read = vast_daft.read_vastdb(
             config=config,
             table_name=VASTDB_CUSTOMERS_TABLE,
-            table_schema=CUSTOMERS_SCHEMA,
             num_splits=4,
-        ).read()
+        )
         print("  (lazy)")
 
     # ==================================================================

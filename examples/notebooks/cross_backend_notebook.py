@@ -43,8 +43,9 @@ def _():
         make_shared_iceberg_catalog,
     )
 
-    from vast_daft import VastDBCatalog, VastDBConfig, VastDBDataSink
+    from vast_daft import VastDBCatalog, VastDBConfig
     from vast_daft.connection import VastDBConnection
+    import vast_daft
 
     return (
         IOConfig,
@@ -52,7 +53,6 @@ def _():
         VastDBCatalog,
         VastDBConfig,
         VastDBConnection,
-        VastDBDataSink,
         configure_daft_runner,
         daft,
         generate_customers,
@@ -63,6 +63,7 @@ def _():
         os,
         pa,
         time,
+        vast_daft,
     )
 
 
@@ -167,7 +168,7 @@ def _(mo):
 
 
 @app.cell
-def _(VASTDB_PRODUCTS_TABLE, VastDBDataSink, daft, generate_products, pa, sess, time, vastdb_config):
+def _(VASTDB_PRODUCTS_TABLE, daft, generate_products, pa, sess, time, vast_daft, vastdb_config):
     sess.set_catalog("vast")
     if sess.has_table(VASTDB_PRODUCTS_TABLE):
         sess.current_catalog().drop_table(VASTDB_PRODUCTS_TABLE)
@@ -195,13 +196,12 @@ def _(VASTDB_PRODUCTS_TABLE, VastDBDataSink, daft, generate_products, pa, sess, 
         ]
     )
     df_products = daft.from_arrow(generate_products(200, unique_names=True))
-    _sink = VastDBDataSink(
+    df_products.write_vastdb(
         config=vastdb_config,
         table_name=VASTDB_PRODUCTS_TABLE,
         table_schema=_products_schema,
         create_if_missing=True,
-    )
-    df_products.write_sink(_sink).show()
+    ).show()
     print(f"Wrote 200 products (17 cols) in {time.perf_counter() - _t0:.2f}s")
     return
 

@@ -37,14 +37,13 @@ def _():
     from vast_daft import (
         VastDBCatalog,
         VastDBConfig,
-        VastDBDataSink,
         VastDBDataSource,
     )
+    import vast_daft
 
     return (
         VastDBCatalog,
         VastDBConfig,
-        VastDBDataSink,
         VastDBDataSource,
         configure_daft_runner,
         daft,
@@ -54,6 +53,7 @@ def _():
         os,
         pa,
         time,
+        vast_daft,
     )
 
 
@@ -173,24 +173,23 @@ def _(mo):
 def _(
     CUSTOMERS_SCHEMA,
     CUSTOMERS_TABLE,
-    VastDBDataSink,
     catalog,
     config,
     customers_data,
     daft,
     time,
+    vast_daft,
 ):
     catalog.drop_table(CUSTOMERS_TABLE)
 
     _t0 = time.perf_counter()
     df_customers = daft.from_arrow(customers_data)
-    _sink = VastDBDataSink(
+    df_customers.write_vastdb(
         config=config,
         table_name=CUSTOMERS_TABLE,
         table_schema=CUSTOMERS_SCHEMA,
         create_if_missing=True,
-    )
-    df_customers.write_sink(_sink).show()
+    ).show()
     _elapsed = time.perf_counter() - _t0
     print(f"Wrote customers in {_elapsed:.2f}s")
     return
@@ -200,24 +199,23 @@ def _(
 def _(
     ORDERS_SCHEMA,
     ORDERS_TABLE,
-    VastDBDataSink,
     catalog,
     config,
     daft,
     orders_data,
     time,
+    vast_daft,
 ):
     catalog.drop_table(ORDERS_TABLE)
 
     _t0 = time.perf_counter()
     df_orders = daft.from_arrow(orders_data)
-    _sink = VastDBDataSink(
+    df_orders.write_vastdb(
         config=config,
         table_name=ORDERS_TABLE,
         table_schema=ORDERS_SCHEMA,
         create_if_missing=True,
-    )
-    df_orders.write_sink(_sink).show()
+    ).show()
     _elapsed = time.perf_counter() - _t0
     print(f"Wrote orders in {_elapsed:.2f}s")
     return
@@ -232,15 +230,9 @@ def _(mo):
 
 
 @app.cell
-def _(CUSTOMERS_SCHEMA, CUSTOMERS_TABLE, VastDBDataSource, config, time):
+def _(CUSTOMERS_TABLE, config, time, vast_daft):
     _t0 = time.perf_counter()
-    _src = VastDBDataSource(
-        config=config,
-        table_name=CUSTOMERS_TABLE,
-        table_schema=CUSTOMERS_SCHEMA,
-        num_splits=4,
-    )
-    df_customers_read = _src.read()
+    df_customers_read = vast_daft.read_vastdb(config=config, table_name=CUSTOMERS_TABLE, num_splits=4)
     df_customers_read.limit(5).show()
     _elapsed = time.perf_counter() - _t0
     print(f"Read customers (4 splits) in {_elapsed:.2f}s")
@@ -248,15 +240,9 @@ def _(CUSTOMERS_SCHEMA, CUSTOMERS_TABLE, VastDBDataSource, config, time):
 
 
 @app.cell
-def _(ORDERS_SCHEMA, ORDERS_TABLE, VastDBDataSource, config, time):
+def _(ORDERS_TABLE, config, time, vast_daft):
     _t0 = time.perf_counter()
-    _src = VastDBDataSource(
-        config=config,
-        table_name=ORDERS_TABLE,
-        table_schema=ORDERS_SCHEMA,
-        num_splits=4,
-    )
-    df_orders_read = _src.read()
+    df_orders_read = vast_daft.read_vastdb(config=config, table_name=ORDERS_TABLE, num_splits=4)
     df_orders_read.limit(5).show()
     _elapsed = time.perf_counter() - _t0
     print(f"Read orders (4 splits) in {_elapsed:.2f}s")
@@ -339,29 +325,26 @@ def _(mo):
 def _(
     JOINED_SCHEMA,
     JOINED_TABLE,
-    VastDBDataSink,
-    VastDBDataSource,
     catalog,
     config,
     df_joined,
     time,
+    vast_daft,
 ):
     catalog.drop_table(JOINED_TABLE)
 
     _t0 = time.perf_counter()
-    _sink = VastDBDataSink(
+    df_joined.write_vastdb(
         config=config,
         table_name=JOINED_TABLE,
         table_schema=JOINED_SCHEMA,
         create_if_missing=True,
-    )
-    df_joined.write_sink(_sink).show()
+    ).show()
     _elapsed = time.perf_counter() - _t0
     print(f"Wrote joined table in {_elapsed:.2f}s")
 
     print("\nVerify — read back:")
-    _src = VastDBDataSource(config=config, table_name=JOINED_TABLE, table_schema=JOINED_SCHEMA)
-    _src.read().limit(10).show()
+    vast_daft.read_vastdb(config=config, table_name=JOINED_TABLE).limit(10).show()
     return
 
 
@@ -374,31 +357,21 @@ def _(mo):
 
 
 @app.cell
-def _(CUSTOMERS_SCHEMA, CUSTOMERS_TABLE, VastDBDataSource, config, daft, time):
+def _(CUSTOMERS_TABLE, config, daft, time, vast_daft):
     _t0 = time.perf_counter()
-    _src = VastDBDataSource(
-        config=config,
-        table_name=CUSTOMERS_TABLE,
-        table_schema=CUSTOMERS_SCHEMA,
-        num_splits=4,
-    )
-    _df = _src.read().filter(daft.col("tier") == daft.lit("platinum")).collect()
+    _df = vast_daft.read_vastdb(config=config, table_name=CUSTOMERS_TABLE, num_splits=4).filter(daft.col("tier") == daft.lit("platinum")).collect()
     _elapsed = time.perf_counter() - _t0
     print(f"Platinum customers: {len(_df):,} rows ({_elapsed:.2f}s)")
     return
 
 
 @app.cell
-def _(ORDERS_SCHEMA, ORDERS_TABLE, VastDBDataSource, config, daft, time):
+def _(ORDERS_TABLE, config, daft, time, vast_daft):
     _t0 = time.perf_counter()
-    _src = VastDBDataSource(
-        config=config,
-        table_name=ORDERS_TABLE,
-        table_schema=ORDERS_SCHEMA,
-        num_splits=4,
-    )
     _df = (
-        _src.read().filter((daft.col("amount") >= daft.lit(200.0)) & (daft.col("amount") <= daft.lit(500.0))).collect()
+        vast_daft.read_vastdb(config=config, table_name=ORDERS_TABLE, num_splits=4)
+        .filter((daft.col("amount") >= daft.lit(200.0)) & (daft.col("amount") <= daft.lit(500.0)))
+        .collect()
     )
     _elapsed = time.perf_counter() - _t0
     print(f"High-value orders (200-500): {len(_df):,} rows ({_elapsed:.2f}s)")
@@ -406,16 +379,10 @@ def _(ORDERS_SCHEMA, ORDERS_TABLE, VastDBDataSource, config, daft, time):
 
 
 @app.cell
-def _(JOINED_SCHEMA, JOINED_TABLE, VastDBDataSource, config, daft, time):
+def _(JOINED_TABLE, config, daft, time, vast_daft):
     _t0 = time.perf_counter()
-    _src = VastDBDataSource(
-        config=config,
-        table_name=JOINED_TABLE,
-        table_schema=JOINED_SCHEMA,
-        num_splits=4,
-    )
     _df = (
-        _src.read()
+        vast_daft.read_vastdb(config=config, table_name=JOINED_TABLE, num_splits=4)
         .filter(daft.col("tier").is_in(["gold", "platinum"]) & (daft.col("amount") >= daft.lit(300.0)))
         .collect()
     )
@@ -425,16 +392,10 @@ def _(JOINED_SCHEMA, JOINED_TABLE, VastDBDataSource, config, daft, time):
 
 
 @app.cell
-def _(JOINED_SCHEMA, JOINED_TABLE, VastDBDataSource, config, daft, time):
+def _(JOINED_TABLE, config, daft, time, vast_daft):
     _t0 = time.perf_counter()
-    _src = VastDBDataSource(
-        config=config,
-        table_name=JOINED_TABLE,
-        table_schema=JOINED_SCHEMA,
-        num_splits=4,
-    )
     _df = (
-        _src.read()
+        vast_daft.read_vastdb(config=config, table_name=JOINED_TABLE, num_splits=4)
         .select(daft.col("name"), daft.col("amount"), daft.col("tier"))
         .filter(daft.col("tier") == daft.lit("gold"))
         .collect()

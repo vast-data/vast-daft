@@ -34,7 +34,8 @@ def build_basic_example_note() -> dict[str, object]:
                 import daft
                 import pyarrow as pa
                 from helpers import configure_daft_runner, generate_customers, generate_orders, get_s3_credentials
-                from vast_daft import VastDBCatalog, VastDBConfig, VastDBDataSink, VastDBDataSource
+                from vast_daft import VastDBCatalog, VastDBConfig, VastDBDataSource
+                import vast_daft
 
                 print(configure_daft_runner(allow_local_fallback=False))
 
@@ -110,21 +111,17 @@ def build_basic_example_note() -> dict[str, object]:
                 customers_data = generate_customers(NUM_CUSTOMERS, include_email=True)
                 orders_data = generate_orders(NUM_ORDERS, NUM_CUSTOMERS)
 
-                daft.from_arrow(customers_data).write_sink(
-                    VastDBDataSink(
-                        config=config,
-                        table_name=CUSTOMERS_TABLE,
-                        table_schema=CUSTOMERS_SCHEMA,
-                        create_if_missing=True,
-                    )
+                daft.from_arrow(customers_data).write_vastdb(
+                    config=config,
+                    table_name=CUSTOMERS_TABLE,
+                    table_schema=CUSTOMERS_SCHEMA,
+                    create_if_missing=True,
                 ).show()
-                daft.from_arrow(orders_data).write_sink(
-                    VastDBDataSink(
-                        config=config,
-                        table_name=ORDERS_TABLE,
-                        table_schema=ORDERS_SCHEMA,
-                        create_if_missing=True,
-                    )
+                daft.from_arrow(orders_data).write_vastdb(
+                    config=config,
+                    table_name=ORDERS_TABLE,
+                    table_schema=ORDERS_SCHEMA,
+                    create_if_missing=True,
                 ).show()
 
                 print(f"Wrote {NUM_CUSTOMERS:,} customers and {NUM_ORDERS:,} orders")
@@ -137,19 +134,17 @@ def build_basic_example_note() -> dict[str, object]:
                 customers_count = 0
                 orders_count = 0
                 for attempt in range(10):
-                    customers_count = VastDBDataSource(
+                    customers_count = vast_daft.read_vastdb(
                         config=config,
                         table_name=CUSTOMERS_TABLE,
-                        table_schema=CUSTOMERS_SCHEMA,
                         num_splits=4,
-                    ).read()
+                    )
                     customers_count = row_count(df=customers_count)
-                    orders_count = VastDBDataSource(
+                    orders_count = vast_daft.read_vastdb(
                         config=config,
                         table_name=ORDERS_TABLE,
-                        table_schema=ORDERS_SCHEMA,
                         num_splits=4,
-                    ).read()
+                    )
                     orders_count = row_count(df=orders_count)
                     if customers_count > 0 and orders_count > 0:
                         break
@@ -162,18 +157,8 @@ def build_basic_example_note() -> dict[str, object]:
                 assert customers_count == NUM_CUSTOMERS, f"Expected {NUM_CUSTOMERS}, got {customers_count}"
                 assert orders_count == NUM_ORDERS, f"Expected {NUM_ORDERS}, got {orders_count}"
 
-                customers_df = VastDBDataSource(
-                    config=config,
-                    table_name=CUSTOMERS_TABLE,
-                    table_schema=CUSTOMERS_SCHEMA,
-                    num_splits=4,
-                ).read()
-                orders_df = VastDBDataSource(
-                    config=config,
-                    table_name=ORDERS_TABLE,
-                    table_schema=ORDERS_SCHEMA,
-                    num_splits=4,
-                ).read()
+                customers_df = vast_daft.read_vastdb(config=config, table_name=CUSTOMERS_TABLE, num_splits=4)
+                orders_df = vast_daft.read_vastdb(config=config, table_name=ORDERS_TABLE, num_splits=4)
 
                 joined_df = customers_df.join(orders_df, on="customer_id", how="inner").select(
                     "customer_id",
@@ -205,21 +190,14 @@ def build_basic_example_note() -> dict[str, object]:
                 revenue_df.show()
 
                 drop_if_exists(table_name=JOINED_TABLE)
-                joined_df.write_sink(
-                    VastDBDataSink(
-                        config=config,
-                        table_name=JOINED_TABLE,
-                        table_schema=JOINED_SCHEMA,
-                        create_if_missing=True,
-                    )
-                ).show()
-
-                verified_count = VastDBDataSource(
+                joined_df.write_vastdb(
                     config=config,
                     table_name=JOINED_TABLE,
                     table_schema=JOINED_SCHEMA,
-                    num_splits=4,
-                ).read()
+                    create_if_missing=True,
+                ).show()
+
+                verified_count = vast_daft.read_vastdb(config=config, table_name=JOINED_TABLE, num_splits=4)
                 verified_count = row_count(df=verified_count)
                 assert verified_count == joined_count, f"Expected {joined_count}, got {verified_count}"
 
@@ -267,7 +245,8 @@ def build_sql_console_note() -> dict[str, object]:
                 import daft
                 import pyarrow as pa
                 from helpers import configure_daft_runner, generate_customers, get_s3_credentials
-                from vast_daft import VastDBCatalog, VastDBConfig, VastDBDataSink
+                from vast_daft import VastDBCatalog, VastDBConfig
+                import vast_daft
 
                 print(configure_daft_runner(allow_local_fallback=False))
 
@@ -335,13 +314,11 @@ def build_sql_console_note() -> dict[str, object]:
                     )
 
                 source_data = generate_customers(1_000, include_email=True)
-                daft.from_arrow(source_data).write_sink(
-                    VastDBDataSink(
-                        config=config,
-                        table_name=TABLE_NAME,
-                        table_schema=TABLE_SCHEMA,
-                        create_if_missing=True,
-                    )
+                daft.from_arrow(source_data).write_vastdb(
+                    config=config,
+                    table_name=TABLE_NAME,
+                    table_schema=TABLE_SCHEMA,
+                    create_if_missing=True,
                 ).show()
 
                 print(f"Attached catalog {CATALOG_ALIAS} and created table {TABLE_NAME}")

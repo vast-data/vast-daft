@@ -30,10 +30,10 @@ import daft
 import pyarrow as pa
 from dotenv import load_dotenv
 
+import vast_daft
 from vast_daft import (
     VastDBCatalog,
     VastDBConfig,
-    VastDBDataSink,
 )
 
 ENDPOINT = "127.0.0.1:9998"
@@ -107,13 +107,12 @@ def seed_table(config: VastDBConfig, table_name: str, n: int = 1_000) -> None:
             "order_date": [f"2025-{random.randint(1, 12):02d}-{random.randint(1, 28):02d}" for _ in range(n)],
         }
     )
-    sink = VastDBDataSink(
+    df.write_vastdb(
         config=config,
         table_name=table_name,
         table_schema=ORDERS_SCHEMA,
         create_if_missing=True,
-    )
-    df.write_sink(sink).show()
+    ).show()
     print(f"Seeded {n:,} rows into {table_name!r}")
 
 

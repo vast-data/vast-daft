@@ -38,12 +38,12 @@ def _():
     import daft
     from helpers import configure_daft_runner, generate_orders, get_s3_credentials, make_shared_iceberg_catalog  # type: ignore
 
-    from vast_daft import VastDBCatalog, VastDBConfig, VastDBDataSink
+    from vast_daft import VastDBCatalog, VastDBConfig
+    import vast_daft
 
     return (
         VastDBCatalog,
         VastDBConfig,
-        VastDBDataSink,
         configure_daft_runner,
         daft,
         generate_orders,
@@ -51,6 +51,7 @@ def _():
         make_shared_iceberg_catalog,
         os,
         time,
+        vast_daft,
     )
 
 
@@ -118,7 +119,7 @@ def _(mo):
 
 
 @app.cell
-def _(FORCE_RECREATE, ORDERS_TABLE, VastDBDataSink, daft, generate_orders, mo, vastdb_catalog, vastdb_config):
+def _(FORCE_RECREATE, ORDERS_TABLE, daft, generate_orders, mo, vast_daft, vastdb_catalog, vastdb_config):
     import time as _time
     import pyarrow as pa
 
@@ -169,13 +170,12 @@ def _(FORCE_RECREATE, ORDERS_TABLE, VastDBDataSink, daft, generate_orders, mo, v
         _df = daft.from_arrow(_batch).into_partitions(_NUM_PARTITIONS)
         _t_arrow = _time.perf_counter()
 
-        _sink = VastDBDataSink(
+        _df.write_vastdb(
             config=vastdb_config,
             table_name=ORDERS_TABLE,
             table_schema=_ORDERS_SCHEMA,
             create_if_missing=True,
         )
-        _df.write_sink(_sink)
         _t_write = _time.perf_counter()
 
         _gen_ms   = (_t_gen   - _t0)     * 1000

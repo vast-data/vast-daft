@@ -23,12 +23,9 @@ DEFAULT_PRODUCTS: list[str] = [
     "Adapter Max",
 ]
 DEFAULT_TIERS: list[str] = ["bronze", "silver", "gold", "platinum"]
-DAFT_NIGHTLY_FIND_LINKS_URL: str = "https://ds0gqyebztuyf.cloudfront.net/builds/nightly/daft/index.html"
-DAFT_VERSION: str = "0.7.10.dev58+g9c99919f9"
+DAFT_VERSION: str = "0.7.12"
 
 VAST_DAFT_DEPS: list[str] = [
-    "--pre",
-    f"--find-links={DAFT_NIGHTLY_FIND_LINKS_URL}",
     f"daft=={DAFT_VERSION}",
     "numpy<2",
     "ray==2.53.0",
