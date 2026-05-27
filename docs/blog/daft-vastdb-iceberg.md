@@ -20,17 +20,17 @@ If the data lives in an operational system, teams usually extract it somewhere e
 
 If the data lives only in a lake, notebooks are easy to scale, but they are often separated from the most current operational state.
 
-The VAST story is different. VAST is designed as a data platform where high-performance storage, database tables, S3 object access, event-driven pipelines, and AI-oriented workloads can live together. Daft adds a modern Python DataFrame layer on top, so developers can work across these systems without constantly changing tools.
+The VAST story is different. The VAST AI Operating System is designed as one platform where high-performance storage, database tables, S3 object access, event-driven pipelines, and AI-oriented workloads can live together. Daft adds a modern Python DataFrame layer on top, so developers can work across these systems without constantly changing tools.
 
-Use VAST DataBase when a table needs database performance, pushdowns, fast metadata, and live operational access. Use Iceberg, Delta, or plain Parquet on VAST S3 when other systems already produce open lakehouse data. Use event topics when the data is arriving continuously and should be part of the same analytical workflow.
+Use VAST DataBase when a table needs database performance, pushdowns, fast metadata, and live operational access. Use Iceberg, Delta, or plain Parquet on VAST S3 when other systems already produce open lakehouse data. Use the VAST Event Broker when the data is arriving continuously — topics are Kafka-compatible at the wire and are materialized as queryable tables inside VAST DataBase, so the same analytical workflow can reach them without a second system.
 
-Daft can sit above all of it. The operational data stays in VAST DataBase. The lakehouse data stays on VAST S3. Event data can be explored as another source. The notebook reads them through catalogs and plans the work across Ray.
+Daft can sit above all of it. The operational data stays in VAST DataBase. The lakehouse data stays on VAST S3. Event topics also land in VAST DataBase as columnar tables, so streams are queried as tables, not as a separate store. The notebook reads them through catalogs and plans the work across Ray.
 
 No export step. No staging table. No separate benchmark-only format conversion.
 
 ## A Quick VAST Primer
 
-VAST is best known for building a high-performance data platform for AI, analytics, and large-scale data services. The storage foundation, VAST DataStore, is an all-flash system designed to scale from terabytes to exabytes while serving file, object, and database workloads from the same platform.
+VAST is best known for building the **VAST AI Operating System** — a high-performance platform for AI, analytics, and large-scale data services. The storage foundation, VAST DataStore, is an all-flash system designed to scale from terabytes to exabytes while serving file, object, and database workloads from the same platform.
 
 The architecture behind it is called **DASE**, short for Disaggregated and Shared Everything. In plain terms, VAST separates compute from storage, but keeps the data globally accessible to the compute layer. That matters for distributed analytics because workers can fan out without each one being tied to a fixed shard of data.
 
@@ -38,7 +38,7 @@ VAST DataBase is the structured data layer on that platform. VAST positions it a
 
 VAST S3 gives the same platform an object interface for lakehouse data. That matters because many systems already write Iceberg, Delta, or Parquet. You do not always get to choose the format, and you should not have to move the data just to analyze it.
 
-VAST DataEngine brings event-driven compute into the same platform story. For this blog, the important idea is simple: batch data, operational data, object data, and event data should not force four separate notebook experiences.
+VAST DataEngine, together with the VAST Event Broker, brings event-driven compute into the same platform story. The broker speaks the Kafka protocol, and every topic is automatically persisted as a real-time table inside VAST DataBase — there is no separate event store to manage. For this blog, the important idea is simple: batch data, operational data, object data, and event data should not force four separate notebook experiences.
 
 That is exactly the kind of platform Daft should be able to use well.
 
@@ -49,20 +49,20 @@ flowchart LR
     Dev([Notebook / Developer]) --> Daft["Daft session<br/>Python DataFrame API"]
     Daft --> Ray["Ray cluster<br/>distributed execution"]
 
-    subgraph VAST["VAST Data Platform"]
-        DB[("VAST DataBase<br/>high-performance tables")]
+    subgraph VAST["VAST AI Operating System"]
+        EVT[/"VAST Event Broker<br/>Kafka-compatible streams"/]
+        DB[("VAST DataBase<br/>operational, analytical,<br/>and materialized event tables")]
         S3[("VAST S3<br/>Iceberg / Delta / Parquet")]
-        EVT[("Event topics<br/>Kafka-style streams")]
+        EVT -- "topics materialized<br/>as tables" --> DB
     end
 
     Ray --> DB
     Ray --> S3
-    Ray --> EVT
 ```
 
 The value of the diagram is the shape, not the boxes. A data team should be able to pick the right storage model for each workload without forcing developers to learn a new access pattern every time.
 
-VAST DataBase is the right home for high-performance tables that benefit from database semantics and pushdowns. VAST S3 is the right home for open lakehouse data produced by Spark, Flink, ingestion tools, or external systems. Event topics are the right home for continuously arriving data. Daft is the layer that lets a notebook ask questions across them.
+VAST DataBase is the right home for high-performance tables that benefit from database semantics and pushdowns — and that includes streams, because every Event Broker topic is persisted as a DataBase table that Daft can read like any other. VAST S3 is the right home for open lakehouse data produced by Spark, Flink, ingestion tools, or external systems. Daft is the layer that lets a notebook ask questions across them.
 
 ## The Developer Experience
 
@@ -73,16 +73,13 @@ You attach VAST catalogs to a Daft session. You attach an Iceberg catalog to the
 ```python
 sess.attach_catalog(vast_db_catalog)
 sess.attach_catalog(vast_s3_iceberg_catalog)
-sess.attach_catalog(vast_events_catalog)
 
 sess.set_catalog("vast_db")
 orders = sess.read_table("orders")
+clicks = sess.read_table("events.clickstream")  # materialized from a Kafka topic
 
 sess.set_catalog("vast_s3")
 customers = sess.read_table("customers")
-
-sess.set_catalog("vast_events")
-clicks = sess.read_table("clickstream")
 
 result = (
     orders
@@ -94,7 +91,7 @@ result = (
 )
 ```
 
-The exact catalog names are deployment details. The important point is that the notebook is just Daft: joins, filters, projections, aggregations, and limits. The table may come from VAST DataBase, Iceberg on VAST S3, or an event topic, but the code does not turn into connector-specific glue.
+The exact catalog and schema names are deployment details. The important point is that the notebook is just Daft: joins, filters, projections, aggregations, and limits. The table may be a long-lived operational table in VAST DataBase, an Iceberg table on VAST S3, or a Kafka topic that the Event Broker has materialized into a DataBase table — the code does not turn into connector-specific glue.
 
 That is important for adoption. A team already using Daft should not need to rewrite its workflow to try VAST. A team already using VAST should not need to teach every notebook author the lower-level database API before they can run an analysis.
 
@@ -105,7 +102,7 @@ The demo uses a simple commerce-style workload:
 - 350 million orders in VAST DataBase
 - Product data in VAST DataBase
 - Customer data in Iceberg on VAST S3
-- Clickstream or event-style data as another catalog source
+- Clickstream events streamed through the VAST Event Broker and materialized as a VAST DataBase table
 - Daft running distributed on Ray in Kubernetes
 
 The main query joins orders to products and calculates margin by product category. A second version applies a filter first, keeping roughly 70 million of the 350 million orders.
@@ -122,7 +119,7 @@ You do not need to understand the internals to use the integration, but the perf
 
 Daft can ask VAST DataBase for table statistics instead of scanning data for simple counts. Filters can become VAST predicates, so rows that do not match are discarded before they leave the database. Column projection means the scan does not have to carry unnecessary fields through the network and into Ray. Splits let Ray workers read in parallel.
 
-For S3 data, Daft can work with open table and file formats such as Iceberg, Delta, and Parquet. That is useful when another system already produced the data and VAST is serving it through S3. For event data, the same notebook can bring fresh streams into the analysis instead of treating them as a separate operational concern.
+For S3 data, Daft can work with open table and file formats such as Iceberg, Delta, and Parquet. That is useful when another system already produced the data and VAST is serving it through S3. For event data, the Event Broker writes each Kafka topic straight into VAST DataBase as a columnar table, so the same notebook can bring fresh streams into the analysis through the normal DataBase reader instead of treating them as a separate operational concern.
 
 Those details are easy to hide behind an API, but they are the difference between "a connector exists" and "the connector is worth using."
 
@@ -142,11 +139,10 @@ For a team already running VAST, the adoption path is intentionally short:
 
 - Install the `vast-daft` package on the Ray cluster.
 - Attach a `VastDBCatalog` to the Daft session.
-- Read VAST DataBase tables with `sess.read_table(...)`.
+- Read VAST DataBase tables with `sess.read_table(...)` — including the tables that the Event Broker materializes from Kafka topics.
 - Join them with Iceberg, Delta, or Parquet data on VAST S3 when the analysis needs lakehouse data.
-- Bring in event topics when the analysis needs fresh stream data.
 
-The data remains on VAST. Daft becomes the notebook and execution layer. Ray provides distributed compute. VAST DataBase, VAST S3, and event streams stay available for the workloads they fit best.
+The data remains on VAST. Daft becomes the notebook and execution layer. Ray provides distributed compute. VAST DataBase (which also holds the Event Broker's materialized stream tables) and VAST S3 stay available for the workloads they fit best.
 
 That is a cleaner story than "copy the data somewhere else and hope the copy is fresh."
 
@@ -154,8 +150,8 @@ That is a cleaner story than "copy the data somewhere else and hope the copy is 
 
 The headline number is easy to remember: **350 million rows aggregated in 6.27 seconds**, or **3.76 seconds** when a selective predicate is pushed into VAST.
 
-But the bigger takeaway is the workflow. A notebook can work across VAST DataBase, open lakehouse data on VAST S3, and event data using one Daft session, while VAST still contributes the platform-level capabilities that make the query fast.
+But the bigger takeaway is the workflow. A notebook can work across VAST DataBase, open lakehouse data on VAST S3, and Event Broker streams that materialize back into VAST DataBase, all from one Daft session, while VAST still contributes the platform-level capabilities that make the query fast.
 
 For technical teams evaluating VAST, that is the kind of integration that matters. It does not just expose data. It makes the data easier to use, faster to explore, and simpler to adopt from the tools developers already want to use.
 
-References: [VAST Data Platform](https://www.vastdata.com/platform), [VAST DataBase](https://www.vastdata.com/platform/database), [VAST DataStore](https://www.vastdata.com/datastore), [VAST DataEngine](https://www.vastdata.com/platform/dataengine), [Daft benchmarks](https://docs.daft.ai/en/stable/benchmarks/).
+References: [VAST AI Operating System](https://www.vastdata.com/platform/ai-os), [VAST DataBase](https://www.vastdata.com/platform/database), [VAST DataStore](https://www.vastdata.com/datastore), [VAST DataEngine](https://www.vastdata.com/platform/dataengine), [VAST Event Broker](https://www.vastdata.com/blog/announcing-the-vast-event-broker), [Daft benchmarks](https://docs.daft.ai/en/stable/benchmarks/).

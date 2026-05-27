@@ -4,6 +4,7 @@ and the column/limit push-down paths in VastDBDataSource.get_tasks().
 
 from __future__ import annotations
 
+from typing import Any, cast
 from unittest.mock import patch
 
 import pyarrow as pa
@@ -46,7 +47,7 @@ class TestReferencedColumns:
         assert cols == {"amount", "status"}
 
     def test_between_and_is_in(self):
-        expr = col("amount").between(lit(10), lit(20)) | col("region").is_in(["us", "eu"])
+        expr = col("amount").between(cast(Any, lit(10)), cast(Any, lit(20))) | col("region").is_in(["us", "eu"])
         pred, cols = pushdowns_to_predicate_and_columns(Pushdowns(filters=expr))
         assert pred is not None
         assert cols == {"amount", "region"}
@@ -220,7 +221,7 @@ def _make_source(**kwargs) -> VastDBDataSource:
 
 def _tasks(source: VastDBDataSource, pushdowns: Pushdowns) -> list[VastDBDataSourceTask]:
     """Collect tasks without executing them (no VastDB connection needed)."""
-    return list(source.get_tasks(pushdowns))
+    return list(cast(Any, source.get_tasks(pushdowns)))
 
 
 class TestColumnPushdown:

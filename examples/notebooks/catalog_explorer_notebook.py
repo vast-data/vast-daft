@@ -68,7 +68,7 @@ def _(
     make_shared_iceberg_catalog,
     os,
 ):
-    ENDPOINT = os.environ.get("VASTDB_ENDPOINT", "http://vippool.ie-dev-pipeline.svc.cluster.local")
+    ENDPOINT = os.environ.get("VASTDB_ENDPOINT", "")
     S3_ENDPOINT = ENDPOINT
     BUCKET = os.environ.get("VASTDB_BUCKET", "collections-bucket")
     SCHEMA = os.environ.get("VASTDB_SCHEMA", "collections-schema")

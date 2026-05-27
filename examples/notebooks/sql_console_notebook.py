@@ -56,7 +56,7 @@ def _(configure_daft_runner):
 
 @app.cell
 def _(VastDBCatalog, VastDBConfig, daft, get_s3_credentials, os):
-    _ENDPOINT = os.environ.get("VASTDB_ENDPOINT", "http://vippool.ie-dev-pipeline.svc.cluster.local")
+    _ENDPOINT = os.environ.get("VASTDB_ENDPOINT", "")
     _BUCKET = os.environ.get("VASTDB_BUCKET", "collections-bucket")
     _SCHEMA = os.environ.get("VASTDB_SCHEMA", "collections-schema")
     _AK, _SK = get_s3_credentials()

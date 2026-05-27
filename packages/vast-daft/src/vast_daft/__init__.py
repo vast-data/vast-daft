@@ -1,9 +1,7 @@
 """vast-daft: Daft custom connector for VastDB.
 
 Provides ``DataSource`` / ``DataSink`` implementations for reading from
-and writing to VastDB, a Daft catalog integration for native SQL queries,
-and a Gravitino-aware catalog that routes VastDB-format tables through
-the native SDK.
+and writing to VastDB, and a Daft catalog integration for native SQL queries.
 
 Importing this module also registers two convenience methods on
 ``daft.DataFrame``:
@@ -25,13 +23,6 @@ from vast_daft.scan import VastDBScanOperator
 from vast_daft.sink import VastDBDataSink
 from vast_daft.source import VastDBDataSource
 from vast_daft.table import VastDBCatalog, VastDBTable
-
-try:
-    from vast_daft.gravitino import VastGravitinoCatalog, VastGravitinoTable
-except ModuleNotFoundError:
-    VastGravitinoCatalog = None
-    VastGravitinoTable = None
-
 
 # ---------------------------------------------------------------------------
 # df.read_vastdb()
@@ -83,6 +74,8 @@ def _read_vastdb(
 
     _bucket = bucket or config.bucket
     _schema = schema or config.schema
+    if _bucket is None or _schema is None:
+        raise ValueError("bucket and schema must be provided either as arguments or via VastDBConfig")
 
     # Discover the PyArrow schema from the live table
     conn = VastDBConnection(config)
@@ -185,9 +178,6 @@ __all__ = [
     # Catalog / Table (Daft interfaces — use with daft.attach_catalog + daft.sql)
     "VastDBCatalog",
     "VastDBTable",
-    # Gravitino-aware catalog (routes format=vastdb to VastDBCatalog)
-    "VastGravitinoCatalog",
-    "VastGravitinoTable",
     # Convenience top-level functions (mirrors daft.read_parquet etc.)
     "read_vastdb",
 ]

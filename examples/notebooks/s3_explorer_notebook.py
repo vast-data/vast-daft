@@ -33,7 +33,7 @@ def _():
 
 @app.cell
 def _(S3Client, S3Path, get_s3_credentials, mo, os):
-    ENDPOINT = os.environ.get("VASTDB_ENDPOINT", "http://vippool.ie-dev-pipeline.svc.cluster.local")
+    ENDPOINT = os.environ.get("VASTDB_ENDPOINT", "")
     BUCKET = os.environ.get("VASTDB_BUCKET", "collections-bucket")
     ACCESS_KEY, SECRET_KEY = get_s3_credentials()
 

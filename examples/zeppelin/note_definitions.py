@@ -78,7 +78,7 @@ def build_basic_example_note() -> dict[str, object]:
 
                 access_key, secret_key = get_s3_credentials()
                 config = VastDBConfig(
-                    endpoint=os.environ.get("VASTDB_ENDPOINT", "http://vippool.ie-dev-pipeline.svc.cluster.local"),
+                    endpoint=os.environ.get("VASTDB_ENDPOINT", ""),
                     access_key=access_key,
                     secret_key=secret_key,
                     bucket=os.environ.get("VASTDB_BUCKET", "collections-bucket"),
@@ -264,7 +264,7 @@ def build_sql_console_note() -> dict[str, object]:
 
                 access_key, secret_key = get_s3_credentials()
                 config = VastDBConfig(
-                    endpoint=os.environ.get("VASTDB_ENDPOINT", "http://vippool.ie-dev-pipeline.svc.cluster.local"),
+                    endpoint=os.environ.get("VASTDB_ENDPOINT", ""),
                     access_key=access_key,
                     secret_key=secret_key,
                     bucket=os.environ.get("VASTDB_BUCKET", "collections-bucket"),

@@ -50,9 +50,9 @@ def _():
 def _(SparkSession, VastDBConfig, get_s3_credentials, os, register_vastdb):
     SPARK_REMOTE = os.environ.get(
         "SPARK_REMOTE",
-        "sc://sail-spark-server.ray-system.svc.cluster.local:50051",
+        "",
     )
-    ENDPOINT = os.environ.get("VASTDB_ENDPOINT", "http://vippool.ie-collections.svc.cluster.local")
+    ENDPOINT = os.environ.get("VASTDB_ENDPOINT", "")
     BUCKET = os.environ.get("VASTDB_BUCKET", "collections-bucket")
     SCHEMA = os.environ.get("VASTDB_SCHEMA", "collections-schema")
     ACCESS_KEY, SECRET_KEY = get_s3_credentials()

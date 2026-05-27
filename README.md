@@ -120,57 +120,41 @@ config = VastDBConfig.from_env()
 | `VASTDB_SCHEMA` | Yes | Schema name |
 | `VASTDB_SSL_VERIFY` | No | `true`/`false` (default `true`) |
 
-## Deployment (Kubernetes + Ray + Marimo + Zeppelin)
+## Deploying on Kubernetes with Ray
 
-Deploy a Ray cluster plus Marimo and Zeppelin notebook servers on Kubernetes:
+`vast-daft` is a regular Python package — no custom container image is required. A typical setup:
 
-1. Copy `.env.example` to a cluster-specific file (e.g. `.env.v141`) and fill in credentials and endpoints.
-2. Deploy:
+1. **Ray cluster on Kubernetes.** Install the [KubeRay](https://github.com/ray-project/kuberay) operator and create a `RayCluster` using the stock `rayproject/ray` image (e.g. `rayproject/ray:2.53.0-py312`).
 
-```bash
-make deploy CLUSTER_ENV=.env.v141
-```
+2. **Install `vast-daft` on the Ray pods.** The package must be importable on every Ray pod (head + workers), since tasks execute on the workers. Options, in order of simplicity:
 
-This builds a wheel, creates the K8s secret from `CLUSTER_ENV`, and deploys via Helm:
-- **Ray cluster** (1 head + 2 workers) via KubeRay operator
-- **Marimo notebook** server for interactive development
-- **Apache Zeppelin** server for paragraph-based notebooks
-- **Ingress** for browser access (nginx), with hostnames derived from `CLUSTER_DOMAIN`
+   **a. PyPI.** Use Ray's `runtime_env` or KubeRay's `runtimeEnvYAML`:
+   ```yaml
+   runtimeEnvYAML: |
+     pip: ["vast-daft"]
+   ```
 
-| Service | URL pattern |
-|---------|-------------|
-| Marimo notebook | `http://marimo.<namespace>.<CLUSTER_DOMAIN>` |
-| Zeppelin notebook | `http://zeppelin.<namespace>.<CLUSTER_DOMAIN>` |
-| Ray dashboard | `http://ray-dashboard.<namespace>.<CLUSTER_DOMAIN>` |
+   **b. Wheel via ConfigMap (no registry needed).** Build the wheel, ship it as a `ConfigMap`, mount it, and `pip install` from the mount on pod startup:
+   ```bash
+   uv build --wheel                                  # produces dist/vast_daft-*.whl
+   kubectl create configmap vast-daft-wheel \
+       --from-file=dist/vast_daft-*.whl -n ray-system
+   ```
+   Then in the `RayCluster` pod spec, mount the ConfigMap and run `pip install /mnt/wheel/vast_daft-*.whl` in an init container (or in the container's `command`).
 
-### Using Ray from Marimo
+   **c. Custom image.** `FROM rayproject/ray:2.53.0-py312` + `RUN pip install vast-daft`. Heaviest option (registry, rebuilds), but fully reproducible.
 
-```python
-import os, daft
-from vast_daft import VastDBCatalog, VastDBConfig
+3. **Credentials.** Expose VastDB and S3 credentials as env vars on the Ray pods: `VASTDB_ENDPOINT`, `VASTDB_ACCESS_KEY`, `VASTDB_SECRET_KEY`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`. See `.env.example`.
 
-daft.set_runner_ray(os.environ["RAY_ADDRESS"])
+4. **Connect from a client.**
+   ```python
+   import daft
+   from vast_daft import VastDBCatalog, VastDBConfig
 
-config = VastDBConfig(...)
-catalog = VastDBCatalog(config)
-df = catalog.read_table("my_table")
-df.show()
-```
-
-### Other Make targets
-
-```bash
-make build      # Build Docker image only
-make push       # Build + push to Zarf registry
-make status     # Show pods, services, ingress
-make logs       # Tail marimo logs
-make zeppelin-logs  # Tail Zeppelin logs
-make test-zeppelin  # Import and run Zeppelin validation notes
-make undeploy   # Remove Helm release (keeps operator)
-make clean      # Remove everything including namespace
-```
-
-See [RAY_DEPLOYMENT.md](RAY_DEPLOYMENT.md) for detailed architecture and troubleshooting.
+   daft.context.set_runner_ray("ray://<head-svc>:10001")
+   catalog = VastDBCatalog(VastDBConfig(...))
+   catalog.read_table("my_table").show()
+   ```
 
 ### Fault tolerance on Ray
 

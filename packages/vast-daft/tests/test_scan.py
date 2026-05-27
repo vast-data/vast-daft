@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from types import SimpleNamespace
+from typing import Any, cast
 from unittest.mock import MagicMock, Mock, patch
 
 import pyarrow as pa
@@ -74,10 +75,10 @@ def test_create_split_tasks_shares_one_txid_across_all_tasks() -> None:
             side_effect=lambda **kwargs: kwargs["func_args"][0],
         ),
     ):
-        tasks = list(op._create_split_tasks(fake_pushdowns))
+        tasks = list(op._create_split_tasks(cast(Any, fake_pushdowns)))
 
-    assert [task._txid for task in tasks] == [4242, 4242, 4242]
-    assert [task._split_index for task in tasks] == [0, 1, 2]
+    assert [cast(Any, task)._txid for task in tasks] == [4242, 4242, 4242]
+    assert [cast(Any, task)._split_index for task in tasks] == [0, 1, 2]
 
 
 def test_create_split_tasks_applies_column_pushdown() -> None:
@@ -95,11 +96,11 @@ def test_create_split_tasks_applies_column_pushdown() -> None:
             side_effect=lambda **kwargs: (captured_schemas.append(kwargs["schema"]) or kwargs["func_args"][0]),
         ),
     ):
-        tasks = list(op._create_split_tasks(fake_pushdowns))
+        tasks = list(op._create_split_tasks(cast(Any, fake_pushdowns)))
 
     assert op.can_absorb_select()
-    assert tasks[0]._columns == ["pk", "source"]
-    assert VastDBDataSourceTask.schema.fget(tasks[0]).to_pyarrow_schema().names == ["pk", "source"]
+    assert cast(Any, tasks[0])._columns == ["pk", "source"]
+    assert cast(Any, VastDBDataSourceTask.schema).fget(tasks[0]).to_pyarrow_schema().names == ["pk", "source"]
 
 
 def test_get_micro_partitions_uses_shared_txid_without_opening_new_transaction() -> None:

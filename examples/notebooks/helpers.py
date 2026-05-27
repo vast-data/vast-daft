@@ -290,7 +290,7 @@ def make_shared_iceberg_catalog(*, name: str = "iceberg") -> SqlCatalog:
     running in the same pod.
     """
     access_key, secret_key = get_s3_credentials()
-    endpoint: str = os.environ.get("VASTDB_ENDPOINT", "http://vippool.ie-dev-pipeline.svc.cluster.local")
+    endpoint: str = os.environ.get("VASTDB_ENDPOINT", "")
     bucket: str = os.environ.get("VASTDB_BUCKET", "collections-bucket")
     db_path: str = get_shared_catalog_db_path()
     warehouse: str = f"s3://{bucket}/iceberg-warehouse"

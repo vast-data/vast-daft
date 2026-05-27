@@ -75,7 +75,7 @@ def _(VastDBCatalog, VastDBConfig, daft, get_s3_credentials, make_shared_iceberg
 
     # ---------- credentials ----------
     ACCESS_KEY, SECRET_KEY = get_s3_credentials()
-    ENDPOINT = os.environ.get("VASTDB_ENDPOINT", "http://vippool.ie-dev-pipeline.svc.cluster.local")
+    ENDPOINT = os.environ.get("VASTDB_ENDPOINT", "")
     BUCKET = os.environ.get("VASTDB_BUCKET", "collections-bucket")
     SCHEMA = os.environ.get("VASTDB_SCHEMA", "collections-schema")
 

@@ -56,10 +56,9 @@ def resolve_target(where: str, name: str) -> tuple[str, dict[str, str] | None, I
     if not bucket:
         sys.exit("ERROR: --where=remote requires VASTDB_BUCKET in the environment.")
 
-    endpoint = os.environ.get(
-        "VASTDB_ENDPOINT",
-        "http://vippool.ie-dev-pipeline.svc.cluster.local",
-    )
+    endpoint = os.environ.get("VASTDB_ENDPOINT", "")
+    if not endpoint:
+        sys.exit("ERROR: --where=remote requires VASTDB_ENDPOINT in the environment.")
     access_key = os.environ.get("S3_ACCESS_KEY") or os.environ.get("VASTDB_ACCESS_KEY")
     secret_key = os.environ.get("S3_SECRET_KEY") or os.environ.get("VASTDB_SECRET_KEY")
     if not access_key or not secret_key:

@@ -21,6 +21,7 @@ Run via:
 from __future__ import annotations
 
 import logging
+import os
 import time
 
 import daft
@@ -35,7 +36,7 @@ from vast_daft import (
 # ---------------------------------------------------------------------------
 # Configuration
 # ---------------------------------------------------------------------------
-ENDPOINT = "http://vippool.ie-dev-pipeline.svc.cluster.local"
+ENDPOINT = os.environ.get("VASTDB_ENDPOINT", "")
 BUCKET = "collections-bucket"
 SCHEMA = "collections-schema"
 ACCESS_KEY = "7P2486YDRB97497707R2"
