@@ -1,6 +1,6 @@
 # Rebuilds the `public` mirror branch from `main` on every change, containing
-# only the paths in .github_target_paths.txt, then pushes it back to this repo.
-# DevOps mirrors GitLab `public` -> GitHub `main` verbatim (no path filtering).
+# only the paths in .github_target_paths.txt (with filtered git history), then
+# pushes it back to this repo. DevOps mirrors GitLab `public` -> GitHub verbatim.
 #
 # Required CI/CD variable (Settings > CI/CD > Variables), masked:
 #   PUBLIC_SYNC_TOKEN  - Project Access Token (role: Maintainer, scope: write_repository)
@@ -16,6 +16,7 @@ sync-public-branch:
   variables:
     GIT_DEPTH: "0"
   script:
+    - pip install --quiet git-filter-repo
     - git config user.email "ci@vastdata.com"
     - git config user.name "vast-daft CI"
     - bash scripts/sync-public-branch.sh "$CI_COMMIT_SHA" public
