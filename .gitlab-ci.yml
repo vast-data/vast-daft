@@ -9,15 +9,12 @@
 
 sync-public-branch:
   stage: deploy
-  image: alpine/git:latest
   tags:
     - code-builder-small-shell-generic-oci
   rules:
     - if: '$CI_COMMIT_BRANCH == "main"'
   variables:
     GIT_DEPTH: "0"
-  before_script:
-    - apk add --no-cache bash
   script:
     - git config user.email "ci@vastdata.com"
     - git config user.name "vast-daft CI"
