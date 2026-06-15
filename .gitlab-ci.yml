@@ -16,7 +16,8 @@ sync-public-branch:
   variables:
     GIT_DEPTH: "0"
   script:
-    - pip install --quiet git-filter-repo
+    - python3 -m pip install --user --quiet git-filter-repo
+    - export PATH="$HOME/.local/bin:$PATH"
     - git config user.email "ci@vastdata.com"
     - git config user.name "vast-daft CI"
     - bash scripts/sync-public-branch.sh "$CI_COMMIT_SHA" public
