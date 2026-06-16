@@ -1,13 +1,3 @@
-# Hybrid CI: external-repo template (trufflehog + GitHub sync on `public`) plus
-# internal `sync-public-branch` on `main`. 
-#
-# Workflow: dev on `main` → filter to `public` → sync `public` to GitHub.
-#
-# Required CI/CD variable (Settings > CI/CD > Variables), masked:
-#   PUBLIC_SYNC_TOKEN  - Project Access Token (role: Maintainer, scope: write_repository)
-# The `public` branch must be unprotected (or allow force-push for the token's
-# role), since each sync replaces it with filtered history.
-
 include:
   - project: devops/ci-templates
     ref: main
@@ -38,7 +28,6 @@ sync-public-branch:
     - git remote set-url origin "https://oauth2:${PUBLIC_SYNC_TOKEN}@${CI_SERVER_HOST}/${CI_PROJECT_PATH}.git"
     - git push -f origin public
 
-# Also scan internal `main` before rebuilding the public mirror.
 trufflehog-scan:
   rules:
     - if: $CI_PIPELINE_SOURCE == "merge_request_event"
@@ -47,8 +36,50 @@ trufflehog-scan:
     - if: $CI_COMMIT_BRANCH =~ /^release\//
     - if: $CI_COMMIT_TAG
 
-# Tags on `main` would expose internal paths on GitHub; disable until filtered
-# tag handling exists.
-sync-tag-to-github:
+sync-branch-to-github:
   rules:
-    - when: never
+    - if: $CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH
+    - if: $CI_COMMIT_BRANCH =~ /^release\//
+
+verify-public-tag:
+  stage: sync
+  variables:
+    GIT_DEPTH: "0"
+  tags:
+    - code-builder-small-shell-generic-oci
+  rules:
+    - if: $CI_COMMIT_TAG && $CI_COMMIT_REF_PROTECTED == "true"
+  script:
+    - git fetch origin public
+    - |
+      if ! git merge-base --is-ancestor "$CI_COMMIT_SHA" "origin/public"; then
+        echo "ERROR: Tag $CI_COMMIT_TAG must point to a commit on the public branch."
+        exit 1
+      fi
+
+sync-tag-to-github:
+  needs:
+    - job: trufflehog-scan
+    - job: verify-public-tag
+  rules:
+    - if: $CI_COMMIT_TAG && $CI_COMMIT_REF_PROTECTED == "true"
+
+publish-to-pypi:
+  needs:
+    - job: trufflehog-scan
+    - job: verify-public-tag
+  variables:
+    GIT_DEPTH: "0"
+  rules:
+    - if: $CI_COMMIT_TAG && $CI_COMMIT_REF_PROTECTED == "true" && $PYPI_PUBLISH == "true"
+  script:
+    - pip install uv --index-url https://${ARTIFACTORY_USER}:${ARTIFACTORY_PASSWORD}@${ARTIFACTORY_URL#https://}/artifactory/api/pypi/pypi-mirror/simple
+    - |
+      TAG_VERSION="${CI_COMMIT_TAG#v}"
+      PKG_VERSION=$(python3 -c "import tomllib; print(tomllib.load(open('packages/vast-daft/pyproject.toml','rb'))['project']['version'])")
+      if [[ "$TAG_VERSION" != "$PKG_VERSION" ]]; then
+        echo "ERROR: Tag $CI_COMMIT_TAG ($TAG_VERSION) != pyproject ($PKG_VERSION)"
+        exit 1
+      fi
+    - uv build --package vast-daft
+    - uv publish --token "$PYPI_TOKEN" dist/*

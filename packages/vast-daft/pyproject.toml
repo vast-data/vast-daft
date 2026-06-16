@@ -2,17 +2,21 @@
 name = "vast-daft"
 version = "0.1.0"
 description = "Daft custom connector (DataSource/DataSink) for VastDB"
-readme = "../../README.md"
+readme = "README.md"
 requires-python = ">=3.12"
 license = "Apache-2.0"
 authors = [{ name = "Ofer Helman", email = "ofer.helman@vastdata.com" }]
-# NOTE: No runtime dependencies listed here intentionally.
-# When deployed via Ray py_modules, pip installs this wheel with --target,
-# which would pull all transitive deps into the py_modules directory and
-# shadow the pip-installed packages (causing version mismatches).
-# Instead, all runtime dependencies are declared in helpers.py VAST_DAFT_DEPS
-# and installed via Ray runtime_env pip.
-dependencies = []
+dependencies = [
+  "daft==0.7.10",
+  "numpy<2",
+  "vastdb>=1.2",
+  "pyarrow>=15.0",
+  "ibis-framework>=9.0",
+]
+
+[project.urls]
+Homepage = "https://github.com/vast-data/vast-daft"
+Repository = "https://github.com/vast-data/vast-daft"
 
 [project.optional-dependencies]
 dev = [
@@ -22,16 +26,9 @@ dev = [
   "pyright>=1.1",
   # "ty>=0.0.0a1",
   "python-dotenv>=1.0",
-  # Runtime deps for local development (type hints, IDE autocomplete).
-  # Not in [project].dependencies to avoid Ray py_modules shadowing.
-  "daft==0.7.10",
-  "numpy<2",
   "ray==2.53.0",
   "pylance>=0.39.0",
-  "vastdb>=1.2",
   "pyiceberg[s3fs,sql-sqlite]>=0.11.1",
-  "pyarrow>=15.0",
-  "ibis-framework>=9.0",
 ]
 examples = [
   "python-dotenv>=1.0",

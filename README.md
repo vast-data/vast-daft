@@ -13,10 +13,16 @@ Daft custom connector (`DataSource` / `DataSink`) for [VastDB](https://vastdata.
 ## Installation
 
 ```bash
+pip install vast-daft
+```
+
+Or with uv:
+
+```bash
 uv add vast-daft
 ```
 
-Or with development dependencies:
+For development in this monorepo:
 
 ```bash
 uv sync --all-extras
