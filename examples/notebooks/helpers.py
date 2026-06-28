@@ -23,7 +23,7 @@ DEFAULT_PRODUCTS: list[str] = [
     "Adapter Max",
 ]
 DEFAULT_TIERS: list[str] = ["bronze", "silver", "gold", "platinum"]
-DAFT_VERSION: str = "0.7.12"
+DAFT_VERSION: str = os.environ.get("DAFT_VERSION", "0.7.15")
 
 VAST_DAFT_DEPS: list[str] = [
     f"daft=={DAFT_VERSION}",
@@ -39,32 +39,73 @@ SHARED_STORAGE_PATH: str = "/shared"
 SHARED_ICEBERG_CATALOG_DB: str = "iceberg_catalog.db"
 
 
-def configure_daft_runner(*, allow_local_fallback: bool = True) -> str:
-    """Configure Daft for marimo and connect to Ray when available."""
+def _vast_daft_pypi_spec() -> str | None:
+    """Build a pip spec for vast-daft from PyPI (prod deploy mode)."""
+    if os.environ.get("VAST_DAFT_SOURCE") != "pypi":
+        return None
+    package = os.environ.get("VAST_DAFT_PYPI_PACKAGE", "vast-daft")
+    version = os.environ.get("VAST_DAFT_PYPI_VERSION", "").strip()
+    if version:
+        return f"{package}=={version}"
+    return package
+
+
+def _build_vast_daft_runtime_env() -> tuple[dict, str]:
+    """Return (runtime_env, source_label) for Ray worker vast-daft install."""
+    pypi_spec = _vast_daft_pypi_spec()
+    if pypi_spec:
+        # PyPI vast-daft declares its own runtime deps (incl. daft==0.7.10)
+        return {"pip": [pypi_spec]}, "pypi"
+
     import glob
 
+    wheel_path = os.environ.get("VAST_DAFT_WHEEL")
+    if wheel_path and not os.path.isfile(wheel_path):
+        wheel_matches = glob.glob(os.path.join(wheel_path, "vast_daft-*.whl"))
+        wheel_path = wheel_matches[0] if wheel_matches else wheel_path
+    if not wheel_path:
+        wheel_matches = glob.glob("/mnt/wheel/vast_daft-*.whl")
+        wheel_path = wheel_matches[0] if wheel_matches else None
+    if wheel_path and os.path.isfile(wheel_path):
+        return {"py_modules": [wheel_path], "pip": VAST_DAFT_DEPS}, "wheel"
+
+    return {}, "none"
+
+
+def _verify_ray_worker_daft_version() -> str:
+    """Fail fast if Ray worker daft differs from the driver (stale runtime_env cache)."""
+    driver_version = daft.__version__
+
+    @ray.remote
+    def _worker_daft_version() -> str:
+        import daft as worker_daft
+
+        return worker_daft.__version__
+
+    worker_version = ray.get(_worker_daft_version.remote())
+    if driver_version != worker_version:
+        raise RuntimeError(
+            f"Daft version mismatch: driver={driver_version}, worker={worker_version}. "
+            f"Expected daft=={DAFT_VERSION}. Restart Ray pods: make redeploy CLUSTER_ENV=.env.<cluster>"
+        )
+    return driver_version
+
+
+def configure_daft_runner(*, allow_local_fallback: bool = True) -> str:
+    """Configure Daft for marimo and connect to Ray when available."""
     os.environ["RAY_TQDM_DISABLE"] = "1"
     os.environ["RAY_LOG_TO_DRIVER"] = "0"
     os.environ["PYTHONWARNINGS"] = "ignore::DeprecationWarning"
 
     try:
-        # Build runtime_env: wheel via py_modules + deps via pip
-        runtime_env = {}
-        wheel_path = os.environ.get("VAST_DAFT_WHEEL")
-        if wheel_path and not os.path.isfile(wheel_path):
-            wheel_matches = glob.glob(os.path.join(wheel_path, "vast_daft-*.whl"))
-            wheel_path = wheel_matches[0] if wheel_matches else wheel_path
-        if not wheel_path:
-            wheel_matches = glob.glob("/mnt/wheel/vast_daft-*.whl")
-            wheel_path = wheel_matches[0] if wheel_matches else None
-        if wheel_path and os.path.isfile(wheel_path):
-            runtime_env["py_modules"] = [wheel_path]
-            runtime_env["pip"] = VAST_DAFT_DEPS
-
+        runtime_env, source = _build_vast_daft_runtime_env()
         ray_address = os.environ.get("RAY_ADDRESS")
         ray.init(address=ray_address, runtime_env=runtime_env or None, ignore_reinit_error=True)
         daft.set_runner_ray(noop_if_initialized=True)
-        return f"Connected to Ray (address={ray_address or 'auto'}, wheel={'yes' if wheel_path else 'no'})"
+        daft_version = _verify_ray_worker_daft_version()
+        return (
+            f"Connected to Ray (address={ray_address or 'auto'}, vast-daft={source}, daft={daft_version})"
+        )
     except Exception as exc:
         if not allow_local_fallback:
             raise
