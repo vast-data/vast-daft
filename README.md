@@ -1,6 +1,11 @@
 # vast-daft
 
+[![PyPI](https://img.shields.io/pypi/v/vast-daft)](https://pypi.org/project/vast-daft/) [![GitHub](https://img.shields.io/badge/GitHub-vast--data%2Fvast--daft-blue?logo=github)](https://github.com/vast-data/vast-daft)
+
 Daft custom connector (`DataSource` / `DataSink`) for [VastDB](https://vastdata.com).
+
+- **PyPI**: https://pypi.org/project/vast-daft/
+- **GitHub**: https://github.com/vast-data/vast-daft
 
 ## Features
 
