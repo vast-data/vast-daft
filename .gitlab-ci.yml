@@ -2,13 +2,79 @@ include:
   - project: devops/ci-templates
     ref: main
     file: /templates/external-repo.gitlab-ci.yml
+  - local: ci/daft-sql-ep.gitlab-ci.yml
 
 stages:
   - security
   - test
+  - build
   - deploy
   - sync
   - publish
+
+test-polaris-packages:
+  stage: test
+  tags:
+    - code-builder-small-shell-generic-oci
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  script:
+    - python3 -m pip install --user --quiet uv
+    - export PATH="$HOME/.local/bin:$PATH"
+    - uv sync --package polaris-client --extra dev
+    - uv run --package polaris-client ruff check packages/polaris-client
+    - uv run --package polaris-client pyright packages/polaris-client/src packages/polaris-client/tests
+    - uv run --package polaris-client pytest packages/polaris-client/tests
+    - uv sync --package polaris-daft-catalog --extra dev
+    - uv run --package polaris-daft-catalog ruff check packages/polaris-daft-catalog
+    - uv run --package polaris-daft-catalog pyright packages/polaris-daft-catalog/src packages/polaris-daft-catalog/tests
+    - uv run --package polaris-daft-catalog pytest packages/polaris-daft-catalog/tests
+
+test-vast-daft:
+  stage: test
+  tags:
+    - code-builder-small-shell-generic-oci
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  script:
+    - python3 -m pip install --user --quiet uv
+    - export PATH="$HOME/.local/bin:$PATH"
+    - uv sync --package vast-daft --extra dev --extra polaris
+    - uv run --package vast-daft ruff check packages/vast-daft/src packages/vast-daft/tests
+    - uv run --package vast-daft pyright packages/vast-daft/src packages/vast-daft/tests
+    - uv run --package vast-daft pytest packages/vast-daft/tests -m "not integration"
+
+test-vastdb-polaris-sync:
+  stage: test
+  tags:
+    - code-builder-small-shell-generic-oci
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  script:
+    - python3 -m pip install --user --quiet uv
+    - export PATH="$HOME/.local/bin:$PATH"
+    - uv sync --package vastdb-polaris-sync --extra dev
+    - uv run --package vastdb-polaris-sync ruff check packages/vastdb-polaris-sync
+    - uv run --package vastdb-polaris-sync pyright packages/vastdb-polaris-sync/src packages/vastdb-polaris-sync/tests
+    - uv run --package vastdb-polaris-sync pytest packages/vastdb-polaris-sync/tests
+
+test-vast-catalog-federation:
+  stage: test
+  tags:
+    - code-builder-small-shell-generic-oci
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  script:
+    - python3 -m pip install --user --quiet uv
+    - export PATH="$HOME/.local/bin:$PATH"
+    - uv sync --package vast-catalog-federation --extra dev
+    - uv run --package vast-catalog-federation ruff check packages/vast-catalog-federation
+    - uv run --package vast-catalog-federation pyright packages/vast-catalog-federation/src packages/vast-catalog-federation/tests
+    - uv run --package vast-catalog-federation pytest packages/vast-catalog-federation/tests
 
 test-daft-sql-ep:
   stage: test
@@ -24,6 +90,17 @@ test-daft-sql-ep:
     - uv run --package daft-sql-ep ruff check packages/daft-sql-ep
     - uv run --package daft-sql-ep pyright packages/daft-sql-ep/src packages/daft-sql-ep/tests
     - uv run --package daft-sql-ep pytest packages/daft-sql-ep/tests
+
+test-trino-polaris-redirector:
+  stage: test
+  image: maven:3.9-eclipse-temurin-24
+  tags:
+    - code-builder-small-shell-generic-oci
+  rules:
+    - if: $CI_PIPELINE_SOURCE == "merge_request_event"
+    - if: '$CI_COMMIT_BRANCH == "main"'
+  script:
+    - mvn -B -f packages/trino-polaris-redirector/pom.xml verify
 
 sync-public-branch:
   stage: deploy
