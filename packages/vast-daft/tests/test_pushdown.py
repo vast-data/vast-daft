@@ -4,6 +4,7 @@ and the column/limit push-down paths in VastDBDataSource.get_tasks().
 
 from __future__ import annotations
 
+import asyncio
 from typing import Any, cast
 from unittest.mock import patch
 
@@ -222,7 +223,13 @@ def _make_source(**kwargs) -> VastDBDataSource:
 
 def _tasks(source: VastDBDataSource, pushdowns: Pushdowns) -> list[VastDBDataSourceTask]:
     """Collect tasks without executing them (no VastDB connection needed)."""
-    return list(cast(Any, source.get_tasks(pushdowns)))
+    tasks = source.get_tasks(pushdowns)
+    if hasattr(tasks, "__aiter__"):
+        async def _collect() -> list[VastDBDataSourceTask]:
+            return [task async for task in tasks]
+
+        return asyncio.run(_collect())
+    return list(cast(Any, tasks))
 
 
 class TestColumnPushdown:

@@ -155,6 +155,8 @@ class VastDBScanOperator(ScanOperator):
             pushdowns.aggregation is not None
             and pushdowns.aggregation_count_mode() is not None
             and pushdowns.aggregation_required_column_names()
+            and pushdowns.filters is None
+            and pushdowns.limit is None
         ):
             count_mode = pushdowns.aggregation_count_mode()
             if count_mode in self.supported_count_modes():
