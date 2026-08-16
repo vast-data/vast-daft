@@ -135,7 +135,7 @@ config = VastDBConfig.from_env()
 
 `vast-daft` is a regular Python package — no custom container image is required. A typical setup:
 
-1. **Ray cluster on Kubernetes.** Install the [KubeRay](https://github.com/ray-project/kuberay) operator and create a `RayCluster` using the stock `rayproject/ray` image (e.g. `rayproject/ray:2.53.0-py312`).
+1. **Ray cluster on Kubernetes.** Install the [KubeRay](https://github.com/ray-project/kuberay) operator and create a `RayCluster` using the stock `rayproject/ray` image (e.g. `rayproject/ray:2.57.0-py312`).
 
 2. **Install `vast-daft` on the Ray pods.** The package must be importable on every Ray pod (head + workers), since tasks execute on the workers. Options, in order of simplicity:
 
@@ -153,7 +153,7 @@ config = VastDBConfig.from_env()
    ```
    Then in the `RayCluster` pod spec, mount the ConfigMap and run `pip install /mnt/wheel/vast_daft-*.whl` in an init container (or in the container's `command`).
 
-   **c. Custom image.** `FROM rayproject/ray:2.53.0-py312` + `RUN pip install vast-daft`. Heaviest option (registry, rebuilds), but fully reproducible.
+   **c. Custom image.** `FROM rayproject/ray:2.57.0-py312` + `RUN pip install vast-daft`. Heaviest option (registry, rebuilds), but fully reproducible.
 
 3. **Credentials.** Expose VastDB and S3 credentials as env vars on the Ray pods: `VASTDB_ENDPOINT`, `VASTDB_ACCESS_KEY`, `VASTDB_SECRET_KEY`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`. See `.env.example`.
 

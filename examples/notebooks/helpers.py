@@ -23,12 +23,12 @@ DEFAULT_PRODUCTS: list[str] = [
     "Adapter Max",
 ]
 DEFAULT_TIERS: list[str] = ["bronze", "silver", "gold", "platinum"]
-DAFT_VERSION: str = os.environ.get("DAFT_VERSION", "0.7.15")
+DAFT_VERSION: str = os.environ.get("DAFT_VERSION", "0.7.24")
 
 VAST_DAFT_DEPS: list[str] = [
     f"daft=={DAFT_VERSION}",
     "numpy<2",
-    "ray==2.53.0",
+    "ray==2.57.0",
     "pylance>=0.39.0",
     "vastdb>=1.2",
     "pyiceberg[s3fs,sql-sqlite]>=0.11.1",
@@ -54,7 +54,7 @@ def _build_vast_daft_runtime_env() -> tuple[dict, str]:
     """Return (runtime_env, source_label) for Ray worker vast-daft install."""
     pypi_spec = _vast_daft_pypi_spec()
     if pypi_spec:
-        # PyPI vast-daft declares its own runtime deps (incl. daft==0.7.10)
+        # PyPI vast-daft declares its own runtime deps (incl. daft==0.7.24)
         return {"pip": [pypi_spec]}, "pypi"
 
     import glob

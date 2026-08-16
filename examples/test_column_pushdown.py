@@ -22,7 +22,7 @@ RAY_RUNTIME_DEPS = [
     f"--find-links={DAFT_NIGHTLY_FIND_LINKS_URL}",
     f"daft=={DAFT_PIP_VERSION}",
     "numpy<2",
-    "ray==2.53.0",
+    "ray==2.57.0",
     "pylance>=0.39.0",
     "vastdb>=1.2",
     "pyiceberg[s3fs,sql-sqlite]>=0.11.1",
