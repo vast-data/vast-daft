@@ -8,6 +8,7 @@ from typing import Any, cast
 from unittest.mock import patch
 
 import pyarrow as pa
+from daft import DataType
 from daft.expressions import col, lit
 from daft.io.pushdowns import Pushdowns
 
@@ -282,3 +283,30 @@ class TestColumnPushdown:
         src = _make_source(num_splits=3)
         tasks = _tasks(src, Pushdowns())
         assert [task._txid for task in tasks] == [777, 777, 777]
+
+
+class TestUnsupportedPredicateStillReportsColumns:
+    """An untranslatable filter is applied by Daft above the scan, so its
+    columns must survive the pushed-down projection. Dropping them made the
+    scan yield a schema without them and the filter raised FieldNotFound.
+    """
+
+    def test_cast_predicate_reports_its_column(self):
+        pred, cols = pushdowns_to_predicate_and_columns(
+            Pushdowns(filters=col("term_hash").cast(DataType.uint64()) == lit(7))
+        )
+        assert pred is None, "cast is not translatable to a VastDB predicate"
+        assert "term_hash" in cols
+
+    def test_function_predicate_reports_its_column(self):
+        pred, cols = pushdowns_to_predicate_and_columns(
+            Pushdowns(filters=col("term").length() == lit(3))
+        )
+        assert pred is None
+        assert "term" in cols
+
+    def test_supported_side_of_and_still_reports_both(self):
+        pred, cols = pushdowns_to_predicate_and_columns(
+            Pushdowns(filters=(col("term") == lit("x")) & (col("term_hash").cast(DataType.uint64()) == lit(7)))
+        )
+        assert {"term", "term_hash"} <= cols

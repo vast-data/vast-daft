@@ -76,19 +76,34 @@ class _DaftToIbisVisitor(ExpressionVisitor):
         # Aliases don't affect predicate semantics — visit the inner expr
         return self.visit(expr)
 
-    def visit_cast(self, expr: Expression, dtype: Any) -> Any:
-        # Casts are not translatable to ibis predicates
+    def _walk_unsupported(self, *exprs: Any) -> Any:
+        """Record columns under an untranslatable node, then decline it.
+
+        Declining still requires the column names: Daft keeps the filter above
+        the scan, so those columns must survive the pushed-down projection or
+        the scan yields a schema without them and the filter raises
+        ``FieldNotFound``.
+        """
+        for expr in exprs:
+            try:
+                self.visit(expr)
+            except Exception:  # noqa: BLE001 — collecting names must not fail the scan
+                logger.debug("Could not walk unsupported sub-expression %r", expr, exc_info=True)
         return _UNSUPPORTED
+
+    def visit_cast(self, expr: Expression, dtype: Any) -> Any:
+        # Casts are not translatable to ibis predicates.
+        return self._walk_unsupported(expr)
 
     def visit_coalesce(self, *args: Expression) -> Any:
         # Forward-compatibility with newer Daft visitor APIs.
-        return _UNSUPPORTED
+        return self._walk_unsupported(*args)
 
     # -- Function dispatch ---------------------------------------------------
 
     def visit_function(self, name: str, args: list) -> Any:
         """Fallback for unrecognised function names."""
-        return _UNSUPPORTED
+        return self._walk_unsupported(*args)
 
     # visit_() in the base class dispatches to visit_<name> if it exists,
     # otherwise calls visit_function().  We register individual functions
@@ -226,7 +241,9 @@ def pushdowns_to_predicate_and_columns(
     ``FieldNotFound``. Callers must union this set with their projection
     before handing it to VastDB.
 
-    The set is empty when the predicate is unsupported or absent.
+    The set is empty only when there is no filter. An *unsupported* filter still
+    reports its columns: Daft applies it above the scan, so those columns must
+    stay in the projection even though no predicate is pushed to VastDB.
     """
     if pushdowns.filters is None:
         return None, set()
@@ -235,11 +252,12 @@ def pushdowns_to_predicate_and_columns(
         result = visitor.visit(pushdowns.filters)
     except Exception as exc:
         logger.debug("Daft filter not pushed down to VastDB — visitor error: %s", exc)
-        return None, set()
+        return None, visitor.referenced_columns
     if result is _UNSUPPORTED:
         logger.debug(
-            "Daft filter not pushed down to VastDB — unsupported expression: %s",
+            "Daft filter not pushed down to VastDB — unsupported expression: %s (columns kept: %s)",
             pushdowns.filters,
+            sorted(visitor.referenced_columns),
         )
-        return None, set()
+        return None, visitor.referenced_columns
     return result, visitor.referenced_columns
