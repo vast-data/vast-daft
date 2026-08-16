@@ -34,6 +34,9 @@ examples = [
   "python-dotenv>=1.0",
 ]
 
+[project.entry-points."daft_sql_ep.catalogs"]
+vastdb = "vast_daft.sql_ep:VastDBProvider"
+
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
