@@ -11,7 +11,12 @@ from daft.io.pushdowns import Pushdowns
 
 from vast_daft.config import VastDBConfig
 from vast_daft.scan import VastDBScanOperator
-from vast_daft.source import VastDBDataSourceTask
+from vast_daft.source import (
+    _ACTIVE_READ_TRANSACTIONS,
+    VastDBDataSourceTask,
+    _begin_shared_read_txid,
+    _close_shared_read_transaction,
+)
 
 
 def _make_scan_operator() -> VastDBScanOperator:
@@ -103,6 +108,60 @@ def test_create_split_tasks_applies_column_pushdown() -> None:
     assert cast(Any, VastDBDataSourceTask.schema).fget(tasks[0]).to_pyarrow_schema().names == ["pk", "source"]
 
 
+def test_filtered_count_uses_split_scan_instead_of_unfiltered_metadata_count() -> None:
+    op = _make_scan_operator()
+    fake_pushdowns = SimpleNamespace(
+        aggregation=object(),
+        filters=object(),
+        limit=None,
+        aggregation_count_mode=lambda: op.supported_count_modes()[0],
+        aggregation_required_column_names=lambda: ["count"],
+    )
+
+    with (
+        patch.object(op, "_create_count_task", side_effect=AssertionError("filtered count must not use table stats")),
+        patch.object(op, "_create_split_tasks", return_value=iter(["split"])),
+    ):
+        assert list(op.to_scan_tasks(cast(Any, fake_pushdowns))) == ["split"]
+
+
+def test_unfiltered_count_uses_metadata_count_task() -> None:
+    op = _make_scan_operator()
+    fake_pushdowns = SimpleNamespace(
+        aggregation=object(),
+        filters=None,
+        limit=None,
+        aggregation_count_mode=lambda: op.supported_count_modes()[0],
+        aggregation_required_column_names=lambda: ["count"],
+    )
+
+    with (
+        patch.object(op, "_create_count_task", return_value=iter(["count"])),
+        patch.object(op, "_create_split_tasks", side_effect=AssertionError("unfiltered count should use table stats")),
+    ):
+        assert list(op.to_scan_tasks(cast(Any, fake_pushdowns))) == ["count"]
+
+
+def test_shared_read_transaction_owner_is_retained_and_can_be_closed() -> None:
+    tx = MagicMock()
+    tx.txid = 9191
+    tx.is_active = True
+    tx.__enter__.return_value = tx
+    connection = SimpleNamespace(session=SimpleNamespace(transaction=Mock(return_value=tx)))
+
+    with patch("vast_daft.source.VastDBConnection", return_value=connection):
+        txid = _begin_shared_read_txid(_make_scan_operator()._config)
+
+    try:
+        assert txid == 9191
+        assert _ACTIVE_READ_TRANSACTIONS[txid][1] is tx
+        _close_shared_read_transaction(txid)
+        tx.__exit__.assert_called_once_with(None, None, None)
+        assert txid not in _ACTIVE_READ_TRANSACTIONS
+    finally:
+        _ACTIVE_READ_TRANSACTIONS.pop(txid, None)
+
+
 def test_get_micro_partitions_uses_shared_txid_without_opening_new_transaction() -> None:
     task = VastDBDataSourceTask(
         vastdb_config=VastDBConfig(
@@ -145,3 +204,31 @@ def test_get_micro_partitions_uses_shared_txid_without_opening_new_transaction()
     assert table_from_txid.call_args.kwargs["txid"] == 9191
     assert len(parts) == 1
     reader1.close.assert_called_once()
+
+
+def test_stale_read_transactions_are_expired() -> None:
+    """A long-lived driver must not pin one VastDB snapshot per query forever."""
+    from vast_daft import source as src
+
+    def _tx(txid: int) -> MagicMock:
+        tx = MagicMock()
+        tx.txid = txid
+        tx.is_active = True
+        tx.__enter__.return_value = tx
+        return tx
+
+    old, new = _tx(1), _tx(2)
+    config = _make_scan_operator()._config
+    src._ACTIVE_READ_TRANSACTIONS.clear()
+    try:
+        with patch.object(src, "_READ_TXN_TTL_S", 0.0):
+            for tx in (old, new):
+                connection = SimpleNamespace(session=SimpleNamespace(transaction=Mock(return_value=tx)))
+                with patch("vast_daft.source.VastDBConnection", return_value=connection):
+                    _begin_shared_read_txid(config)
+        # Opening the second snapshot expires the first, which is already past TTL.
+        old.__exit__.assert_called_once_with(None, None, None)
+        assert 1 not in src._ACTIVE_READ_TRANSACTIONS
+        assert 2 in src._ACTIVE_READ_TRANSACTIONS
+    finally:
+        src._ACTIVE_READ_TRANSACTIONS.clear()

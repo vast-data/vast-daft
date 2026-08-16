@@ -8,8 +8,11 @@ can be shared across tasks so every split reads from the same snapshot.
 
 from __future__ import annotations
 
+import atexit
 import logging
 import os
+import threading
+import time
 from collections.abc import AsyncIterator, Iterator
 from typing import TYPE_CHECKING, cast
 
@@ -30,6 +33,59 @@ if TYPE_CHECKING:
     from vastdb.table import TableInTransaction
 
 logger = logging.getLogger(__name__)
+
+# Snapshot pinning did become a problem: daft-sql-ep is a long-lived driver, and
+# holding one open read tx per scan operator per query leaked sockets and pinned
+# VastDB snapshots indefinitely (measured: +39 fds over ~30 queries). There is no
+# close-on-last-task hook — the splits are consumed in Ray workers — so bound the
+# set by age and count instead. A snapshot outlives its query by at most the TTL.
+_READ_TXN_TTL_S = float(os.environ.get("VAST_DAFT_READ_TXN_TTL", "300"))
+_MAX_ACTIVE_READ_TXNS = int(os.environ.get("VAST_DAFT_MAX_READ_TXNS", "64"))
+
+_ACTIVE_READ_TRANSACTIONS: dict[int, tuple[float, Transaction]] = {}
+_ACTIVE_READ_TRANSACTIONS_LOCK = threading.Lock()
+
+
+def _close_shared_read_transaction(txid: int) -> None:
+    """Commit and release a driver-owned shared read transaction."""
+    with _ACTIVE_READ_TRANSACTIONS_LOCK:
+        entry = _ACTIVE_READ_TRANSACTIONS.pop(txid, None)
+    tx = entry[1] if entry is not None else None
+    if tx is not None and tx.is_active:
+        tx.__exit__(None, None, None)
+
+
+def _expire_shared_read_transactions() -> None:
+    """Close read snapshots whose query finished long ago, oldest first."""
+    now = time.monotonic()
+    with _ACTIVE_READ_TRANSACTIONS_LOCK:
+        by_age = sorted((started, txid) for txid, (started, _) in _ACTIVE_READ_TRANSACTIONS.items())
+        stale = {txid for started, txid in by_age if now - started > _READ_TXN_TTL_S}
+        overflow = len(by_age) - len(stale) - _MAX_ACTIVE_READ_TXNS
+        if overflow > 0:
+            live = [txid for _, txid in by_age if txid not in stale]
+            stale.update(live[:overflow])
+    for txid in stale:
+        try:
+            _close_shared_read_transaction(txid)
+        except Exception:  # noqa: BLE001 — teardown must not fail a new query
+            logger.warning("Failed to close stale VastDB read transaction %s", txid, exc_info=True)
+    if stale:
+        logger.info("Closed %d stale VastDB read snapshot(s)", len(stale))
+
+
+def _close_all_shared_read_transactions() -> None:
+    """Best-effort process teardown for shared read snapshots."""
+    with _ACTIVE_READ_TRANSACTIONS_LOCK:
+        txids = list(_ACTIVE_READ_TRANSACTIONS)
+    for txid in txids:
+        try:
+            _close_shared_read_transaction(txid)
+        except Exception:  # noqa: BLE001
+            logger.warning("Failed to close shared VastDB read transaction %s", txid, exc_info=True)
+
+
+atexit.register(_close_all_shared_read_transactions)
 
 # Default number of splits when not specified by the caller.
 _DEFAULT_NUM_SPLITS = 4
@@ -559,10 +615,20 @@ class VastDBDataSource(DataSource):
 
 
 def _begin_shared_read_txid(config: VastDBConfig) -> int:
-    """Open one read transaction and return its txid for all split tasks."""
+    """Open and retain one read transaction for all split tasks.
+
+    The owner transaction is retained in the driver process so its session is
+    not discarded while workers consume the shared snapshot. Registered
+    transactions are committed during process teardown, and callers may use
+    :func:`_close_shared_read_transaction` for explicit lifecycle control.
+    """
+    _expire_shared_read_transactions()
     connection = VastDBConnection(config)
     tx = connection.session.transaction()
     tx.__enter__()
     if tx.txid is None:
         raise ValueError("Failed to start VastDB read transaction")
-    return tx.txid
+    txid = tx.txid
+    with _ACTIVE_READ_TRANSACTIONS_LOCK:
+        _ACTIVE_READ_TRANSACTIONS[txid] = (time.monotonic(), tx)
+    return txid
