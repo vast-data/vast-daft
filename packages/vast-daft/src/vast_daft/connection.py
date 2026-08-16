@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 import logging
+import os
+import threading
+import time
 from collections.abc import Generator
 from contextlib import contextmanager
 from typing import TYPE_CHECKING, Any
@@ -17,6 +20,101 @@ if TYPE_CHECKING:
     from vastdb.table import Table
 
 logger = logging.getLogger(__name__)
+
+# Query planning re-resolves every table reference, and each resolution costs a
+# columns() (~140ms) plus load_stats() (~55ms) round trip. Those dominate latency
+# for multi-table queries, so memoise them briefly. Set to 0 to disable.
+METADATA_TTL_S = float(os.environ.get("VAST_DAFT_METADATA_TTL", "60"))
+
+_meta_lock = threading.Lock()
+_schema_cache: dict[tuple[Any, ...], tuple[float, pa.Schema]] = {}
+_stats_cache: dict[tuple[Any, ...], tuple[float, int]] = {}
+_exists_cache: dict[tuple[Any, ...], tuple[float, bool]] = {}
+
+
+def _meta_key(config: VastDBConfig, bucket: str, schema: str, table: str) -> tuple[Any, ...]:
+    return (config.endpoint, config.access_key, bucket, schema, table)
+
+
+def _cached(store: dict[tuple[Any, ...], tuple[float, Any]], key: tuple[Any, ...]) -> Any | None:
+    if METADATA_TTL_S <= 0:
+        return None
+    with _meta_lock:
+        hit = store.get(key)
+    if hit is None or time.monotonic() - hit[0] > METADATA_TTL_S:
+        return None
+    return hit[1]
+
+
+def _store(store: dict[tuple[Any, ...], tuple[float, Any]], key: tuple[Any, ...], value: Any) -> Any:
+    if METADATA_TTL_S > 0:
+        with _meta_lock:
+            store[key] = (time.monotonic(), value)
+    return value
+
+
+def clear_metadata_cache() -> None:
+    """Drop cached schemas/stats — call after DDL that this process did not make."""
+    with _meta_lock:
+        _schema_cache.clear()
+        _stats_cache.clear()
+        _exists_cache.clear()
+
+
+def cached_exists(key_parts: tuple[Any, ...], loader: Any) -> bool:
+    """Memoise a table-existence check for METADATA_TTL_S.
+
+    The SDK resolves ``schema.table(name)`` by listing every table in the
+    schema, and Daft's SQL resolver probes existence several times per table
+    reference, so this is the single hottest planning RPC.
+
+    Only positives are cached: a miss may be a table about to be created.
+    """
+    hit = _cached(_exists_cache, key_parts)
+    if hit is not None:
+        return True
+    found = bool(loader())
+    if found:
+        _store(_exists_cache, key_parts, True)
+    return found
+
+
+def cached_table_schema(key_parts: tuple[Any, ...], loader: Any) -> pa.Schema:
+    """Memoise a table's Arrow schema for METADATA_TTL_S.
+
+    ``loader`` is only called on a miss, so callers keep whatever RPC path they
+    already use (interactive or TableMetadata).
+    """
+    hit = _cached(_schema_cache, key_parts)
+    if hit is not None:
+        return hit
+    return _store(_schema_cache, key_parts, loader())
+
+
+def cached_columns(config: VastDBConfig, bucket: str, schema: str, table: str) -> pa.Schema:
+    """Arrow schema for a table, memoised for METADATA_TTL_S."""
+
+    def _load() -> pa.Schema:
+        connection = VastDBConnection(config)
+        with connection.session.transaction() as tx:
+            return tx.bucket(bucket).schema(schema).table(table).columns()
+
+    return cached_table_schema(_meta_key(config, bucket, schema, table), _load)
+
+
+def cached_row_count(config: VastDBConfig, bucket: str, schema: str, table: str, table_schema: pa.Schema) -> int:
+    """Row count from table stats, memoised for METADATA_TTL_S."""
+    key = _meta_key(config, bucket, schema, table)
+    hit = _cached(_stats_cache, key)
+    if hit is not None:
+        return hit
+    connection = VastDBConnection(config)
+    table_md = TableMetadata(TableRef(bucket, schema, table), arrow_schema=table_schema)
+    with connection.session.transaction() as tx:
+        table_md.load_stats(tx)
+        stats = table_md.stats
+        rows = stats.num_rows if stats is not None else 0
+    return _store(_stats_cache, key, rows)
 
 
 class VastDBConnection:

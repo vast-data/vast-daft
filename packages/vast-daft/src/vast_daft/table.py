@@ -18,7 +18,7 @@ from daft.logical.builder import LogicalPlanBuilder
 from daft.schema import Schema
 
 from vast_daft.config import VastDBConfig
-from vast_daft.connection import VastDBConnection
+from vast_daft.connection import VastDBConnection, clear_metadata_cache
 from vast_daft.scan import VastDBScanOperator
 from vast_daft.sink import VastDBDataSink
 
@@ -142,8 +142,23 @@ class VastDBTable(Table):
             yield table
 
     def _discover_schema(self, *, columns: list[str] | None = None) -> pa.Schema:
-        with self._vastdb_table() as table:
-            full_schema = table.columns()
+        # Called for every table reference in every query (schema() and read()),
+        # and the interactive path costs a bucket HEAD + schema/table listing +
+        # columns(). Query planning is dominated by these, so memoise briefly.
+        from vast_daft.connection import cached_table_schema
+
+        def _load() -> pa.Schema:
+            with self._vastdb_table() as table:
+                return table.columns()
+
+        key = (
+            self._config.endpoint,
+            self._config.access_key,
+            self._bucket,
+            self._schema_path,
+            self._name,
+        )
+        full_schema = cached_table_schema(key, _load)
         if columns is None:
             return full_schema
         return pa.schema([full_schema.field(name) for name in columns])
@@ -161,6 +176,7 @@ class VastDBTable(Table):
             table = db_schema.table(self._name, fail_if_missing=False)
             if table is not None:
                 table.drop()
+                clear_metadata_cache()
 
 
 class VastDBCatalog(Catalog):
@@ -340,16 +356,22 @@ class VastDBCatalog(Catalog):
         namespace: tuple[str, ...],
         table_name: str,
     ) -> bool:
-        with self._connection.session.transaction() as tx:
-            db_bucket = tx.bucket(bucket)
-            db_schema = db_bucket.schema(schema, fail_if_missing=False)
-            if db_schema is None:
-                return False
-            for part in namespace:
-                db_schema = db_schema.schema(part, fail_if_missing=False)
+        from vast_daft.connection import cached_exists
+
+        def _probe() -> bool:
+            with self._connection.session.transaction() as tx:
+                db_bucket = tx.bucket(bucket)
+                db_schema = db_bucket.schema(schema, fail_if_missing=False)
                 if db_schema is None:
                     return False
-            return db_schema.table(table_name, fail_if_missing=False) is not None
+                for part in namespace:
+                    db_schema = db_schema.schema(part, fail_if_missing=False)
+                    if db_schema is None:
+                        return False
+                return db_schema.table(table_name, fail_if_missing=False) is not None
+
+        key = (self._config.endpoint, self._config.access_key, bucket, schema, namespace, table_name)
+        return cached_exists(key, _probe)
 
     def _list_tables(self, pattern: str | None = None) -> list[Identifier]:
         if self._config.bucket is None:
@@ -418,6 +440,7 @@ class VastDBCatalog(Catalog):
             table = db_schema.table(table_name, fail_if_missing=False)
             if table is not None:
                 table.drop()
+                clear_metadata_cache()
 
     def drop_table_if_exists(self, identifier: Identifier | str) -> None:
         """Drop a table if it exists, silently succeeding otherwise."""

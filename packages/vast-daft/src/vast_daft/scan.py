@@ -27,7 +27,6 @@ from daft.recordbatch import RecordBatch
 
 from vast_daft._pushdown import pushdowns_to_predicate_and_columns
 from vast_daft.config import VastDBConfig
-from vast_daft.connection import VastDBConnection
 from vast_daft.source import (
     VastDBDataSourceTask,
     _begin_shared_read_txid,
@@ -180,7 +179,8 @@ class VastDBScanOperator(ScanOperator):
         silently degrade to unknown size estimates.
         """
         from tenacity import retry, stop_after_attempt, wait_exponential
-        from vastdb.table_metadata import TableMetadata, TableRef
+
+        from vast_daft.connection import cached_row_count
 
         @retry(
             stop=stop_after_attempt(3),
@@ -188,15 +188,13 @@ class VastDBScanOperator(ScanOperator):
             reraise=True,
         )
         def _fetch() -> int:
-            connection = VastDBConnection(self._config)
-            table_md = TableMetadata(
-                TableRef(self._bucket, self._db_schema, self._table_name),
-                arrow_schema=self._table_schema,
+            return cached_row_count(
+                self._config,
+                self._bucket,
+                self._db_schema,
+                self._table_name,
+                self._table_schema,
             )
-            with connection.session.transaction() as tx:
-                table_md.load_stats(tx)
-                stats = table_md.stats
-                return stats.num_rows if stats is not None else 0
 
         return _fetch()
 

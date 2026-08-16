@@ -9,6 +9,7 @@ can be shared across tasks so every split reads from the same snapshot.
 from __future__ import annotations
 
 import logging
+import os
 from collections.abc import AsyncIterator, Iterator
 from typing import TYPE_CHECKING, cast
 
@@ -35,6 +36,11 @@ _DEFAULT_NUM_SPLITS = 4
 
 # Upper bound so we never create an unreasonable number of tasks.
 _MAX_AUTO_SPLITS = 64
+
+# Rows per split when the caller gives no QueryConfig. This is a parallelism knob,
+# not a VastDB page size: at 4M a 3-7M row table produced a single scan task and
+# never engaged Ray at all. Keep it well under typical table sizes.
+_DEFAULT_ROWS_PER_SPLIT = int(os.environ.get("VAST_DAFT_ROWS_PER_SPLIT", "500000"))
 
 
 def _project_pyarrow_schema(table_schema: pa.Schema, columns: list[str] | None) -> pa.Schema:
@@ -118,10 +124,21 @@ def _estimate_splits_from_stats(
             stats = table_md.stats
             if stats is None or stats.num_rows == 0:
                 return 1
-            return max(1, stats.num_rows // rows_per_split)
+            return _split_count(stats.num_rows, rows_per_split)
     except Exception:  # noqa: BLE001
         logger.debug("Failed to fetch table stats for split estimation", exc_info=True)
         return None
+
+
+def _split_count(row_count: int, rows_per_split: int) -> int:
+    """Splits needed to cover ``row_count``.
+
+    Rounds up: floor division silently collapses to a single task for any table
+    smaller than ``rows_per_split``, which is exactly when the cliff hurts most.
+    """
+    if row_count <= 0 or rows_per_split <= 0:
+        return 1
+    return max(1, -(-row_count // rows_per_split))
 
 
 def _estimate_splits_from_row_count(
@@ -130,9 +147,7 @@ def _estimate_splits_from_row_count(
     rows_per_split: int,
 ) -> int:
     """Estimate split count from a known row count."""
-    if row_count <= 0:
-        return 1
-    return max(1, row_count // rows_per_split)
+    return _split_count(row_count, rows_per_split)
 
 
 def _resolve_num_splits(
@@ -163,7 +178,7 @@ def _resolve_num_splits(
     if query_config is not None and query_config.num_splits is not None:
         return query_config.num_splits
 
-    rows_per_split = (query_config.rows_per_split if query_config else None) or 4_000_000
+    rows_per_split = (query_config.rows_per_split if query_config else None) or _DEFAULT_ROWS_PER_SPLIT
 
     # Try to estimate from table stats (cheap metadata RPC).
     if row_count is not None:

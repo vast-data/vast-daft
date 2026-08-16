@@ -78,10 +78,9 @@ def _read_vastdb(
         raise ValueError("bucket and schema must be provided either as arguments or via VastDBConfig")
 
     # Discover the PyArrow schema from the live table
-    conn = VastDBConnection(config)
-    with conn.session.transaction() as tx:
-        db_table = tx.bucket(_bucket).schema(_schema).table(table_name)
-        pa_schema = db_table.columns()
+    from vast_daft.connection import cached_columns
+
+    pa_schema = cached_columns(config, _bucket, _schema, table_name)
 
     if columns is not None:
         pa_schema = pa.schema([pa_schema.field(c) for c in columns])
