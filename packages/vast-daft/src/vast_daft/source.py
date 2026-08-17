@@ -312,6 +312,7 @@ class VastDBDataSourceTask(DataSourceTask):
         query_config: QueryConfig | None = None,
         limit: int | None = None,
         txid: int | None = None,
+        table_type: int | None = None,
     ) -> None:
         self._vastdb_config = vastdb_config
         self._table_name = table_name
@@ -325,6 +326,7 @@ class VastDBDataSourceTask(DataSourceTask):
         self._query_config = query_config
         self._limit = limit
         self._txid = txid
+        self._table_type = table_type
 
     @property
     def schema(self) -> Schema:
@@ -355,6 +357,7 @@ class VastDBDataSourceTask(DataSourceTask):
             bucket=self._bucket,
             schema=self._schema,
             txid=self._txid,
+            table_type=self._table_type,
         )
         if table is None:
             raise ValueError("Read tasks require a shared transaction ID")
@@ -416,6 +419,7 @@ def _table_from_existing_txid(
     bucket: str,
     schema: str,
     txid: int | None,
+    table_type: int | None = None,
 ) -> TableInTransaction | None:
     """Build a non-interactive VastDB table bound to an existing txid."""
     if txid is None:
@@ -423,13 +427,62 @@ def _table_from_existing_txid(
 
     from vastdb.table_metadata import TableMetadata, TableRef
 
-    table_md = TableMetadata(
-        TableRef(bucket, schema, table_name),
-        arrow_schema=table_schema,
-    )
-    tx = Transaction(connection.session, txid=txid)
-    table_md.load_stats(tx)
+    resolved_type = _coerce_table_type(table_type)
+    try:
+        table_md = TableMetadata(
+            TableRef(bucket, schema, table_name),
+            arrow_schema=table_schema,
+            table_type=resolved_type,
+        )
+    except TypeError:
+        table_md = TableMetadata(
+            TableRef(bucket, schema, table_name),
+            arrow_schema=table_schema,
+        )
+    from vast_daft.connection import ensure_table_metadata_loaded
+
+    tx = _bind_existing_txid(connection.session, txid)
+    # vastdb 2.x load_stats() does not set table_type. If the driver already
+    # resolved it, keep that value and only fetch stats (needed for VIP
+    # discovery). Otherwise load() / load_schema() on the worker.
+    if getattr(table_md, "_table_type", None) is None:
+        ensure_table_metadata_loaded(table_md, tx)
+    elif getattr(table_md, "stats", None) is None:
+        table_md.load_stats(tx)
     return cast("TableInTransaction", tx.table_from_metadata(table_md))
+
+
+def _coerce_table_type(value: int | object | None) -> object | None:
+    """Convert a pickled integer back to vastdb ``TableType`` when available."""
+    if value is None:
+        return None
+    try:
+        from vastdb.table_metadata import TableType
+    except ImportError:
+        return value
+    if isinstance(value, TableType):
+        return value
+    try:
+        return TableType(int(value))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return value
+
+
+def _bind_existing_txid(session: object, txid: int) -> Transaction:
+    """Rejoin a driver-owned snapshot on a worker.
+
+    vastdb 2.x requires ``_session_context``; 1.x was ``Transaction(session, txid=)``.
+    """
+    context = getattr(session, "_context", None)
+    if context is not None:
+        return Transaction(
+            _rpc=session,  # type: ignore[arg-type]
+            _session_context=context,
+            txid=txid,
+            _adbc_driver_path=getattr(session, "adbc_driver_path", None),
+            _end_user=getattr(session, "_end_user", None),
+        )
+    return Transaction(session, txid=txid)  # type: ignore[call-arg,misc]
 
 
 class VastDBDataSource(DataSource):
@@ -509,6 +562,7 @@ class VastDBDataSource(DataSource):
         self._schema: str = _schema
         self._query_config = query_config
         self._shared_txid = _begin_shared_read_txid(config)
+        self._table_type: int | None = None
 
         # Resolve the effective number of splits.
         self._num_splits = _resolve_num_splits(
@@ -592,6 +646,17 @@ class VastDBDataSource(DataSource):
                     limit,
                 )
 
+        if self._table_type is None:
+            from vast_daft.connection import cached_table_type
+
+            self._table_type = cached_table_type(
+                self._config,
+                self._bucket,
+                self._schema,
+                self._table_name,
+                self._table_schema,
+            )
+
         logger.info(
             "Creating %d split tasks for table %r",
             self._num_splits,
@@ -611,6 +676,7 @@ class VastDBDataSource(DataSource):
                 query_config=self._query_config,
                 limit=limit,
                 txid=self._shared_txid,
+                table_type=self._table_type,
             )
 
 

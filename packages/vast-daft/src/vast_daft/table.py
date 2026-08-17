@@ -77,6 +77,8 @@ class VastDBTable(Table):
         self._bucket = bucket
         self._schema = schema
         self._namespace = namespace
+        # Cache key for _discover_schema(); must include nested namespaces.
+        self._schema_path = "/".join((schema, *namespace)) if namespace else schema
 
     # -- abstract interface --------------------------------------------------
 

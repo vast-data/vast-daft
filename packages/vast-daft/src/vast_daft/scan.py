@@ -27,6 +27,7 @@ from daft.recordbatch import RecordBatch
 
 from vast_daft._pushdown import pushdowns_to_predicate_and_columns
 from vast_daft.config import VastDBConfig
+from vast_daft.connection import cached_table_type
 from vast_daft.source import (
     VastDBDataSourceTask,
     _begin_shared_read_txid,
@@ -110,6 +111,7 @@ class VastDBScanOperator(ScanOperator):
         self._schema = Schema.from_pyarrow_schema(table_schema)
         self._explicit_num_splits = num_splits
         self._shared_txid: int | None = None
+        self._table_type: int | None = None
 
     # -- ScanOperator abstract interface -------------------------------------
 
@@ -314,6 +316,19 @@ class VastDBScanOperator(ScanOperator):
 
         if self._shared_txid is None:
             self._shared_txid = _begin_shared_read_txid(self._config)
+        if self._table_type is None:
+            self._table_type = cached_table_type(
+                self._config,
+                self._bucket,
+                self._db_schema,
+                self._table_name,
+                self._table_schema,
+            )
+            logger.info(
+                "Resolved VastDB table_type=%s for %r",
+                self._table_type,
+                self._table_name,
+            )
 
         for i in range(effective_num_splits):
             task = VastDBDataSourceTask(
@@ -329,6 +344,7 @@ class VastDBScanOperator(ScanOperator):
                 query_config=self._query_config,
                 limit=limit,
                 txid=self._shared_txid,
+                table_type=self._table_type,
             )
             yield ScanTask.python_factory_func_scan_task(
                 module=_read_vastdb_split.__module__,

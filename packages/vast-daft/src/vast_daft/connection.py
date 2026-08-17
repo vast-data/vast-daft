@@ -29,6 +29,7 @@ METADATA_TTL_S = float(os.environ.get("VAST_DAFT_METADATA_TTL", "60"))
 _meta_lock = threading.Lock()
 _schema_cache: dict[tuple[Any, ...], tuple[float, pa.Schema]] = {}
 _stats_cache: dict[tuple[Any, ...], tuple[float, int]] = {}
+_type_cache: dict[tuple[Any, ...], tuple[float, int]] = {}
 _exists_cache: dict[tuple[Any, ...], tuple[float, bool]] = {}
 
 
@@ -58,6 +59,7 @@ def clear_metadata_cache() -> None:
     with _meta_lock:
         _schema_cache.clear()
         _stats_cache.clear()
+        _type_cache.clear()
         _exists_cache.clear()
 
 
@@ -115,6 +117,48 @@ def cached_row_count(config: VastDBConfig, bucket: str, schema: str, table: str,
         stats = table_md.stats
         rows = stats.num_rows if stats is not None else 0
     return _store(_stats_cache, key, rows)
+
+
+def cached_table_type(
+    config: VastDBConfig, bucket: str, schema: str, table: str, table_schema: pa.Schema
+) -> int | None:
+    """VastDB ``TableType`` value, memoised for METADATA_TTL_S.
+
+    vastdb 2.x sets ``table_type`` in ``load()`` / ``load_schema()``, not
+    ``load_stats()``. Resolve it on the driver and pass the integer to Ray
+    workers so ``select_splits()`` does not depend on a worker-side ``load()``.
+    """
+    key = _meta_key(config, bucket, schema, table)
+    hit = _cached(_type_cache, key)
+    if hit is not None:
+        return hit
+    try:
+        connection = VastDBConnection(config)
+        table_md = TableMetadata(TableRef(bucket, schema, table), arrow_schema=table_schema)
+        with connection.session.transaction() as tx:
+            ensure_table_metadata_loaded(table_md, tx)
+            table_type = getattr(table_md, "_table_type", None)
+            if table_type is None:
+                return None
+            raw = getattr(table_type, "value", table_type)
+            return _store(_type_cache, key, int(raw))
+    except Exception:  # noqa: BLE001 — worker can still load() if the driver miss
+        logger.debug("Failed to resolve VastDB table_type for %s/%s/%s", bucket, schema, table, exc_info=True)
+        return None
+
+
+def ensure_table_metadata_loaded(table_md: TableMetadata, tx: Any) -> None:
+    """Populate fields ``table_from_metadata()`` needs.
+
+    vastdb 2.x sets ``table_type`` in ``load()`` / ``load_schema()``.
+    ``load_stats()`` only fills row counts; the SDK error still says
+    "load using load_stats", which is stale.
+    """
+    load = getattr(table_md, "load", None)
+    if callable(load):
+        load(tx)
+        return
+    table_md.load_stats(tx)
 
 
 class VastDBConnection:
@@ -218,9 +262,7 @@ class VastDBConnection:
             arrow_schema=table_schema,
         )
         with self._session.transaction() as tx:
-            # load_stats sets table_type which is required by insert()
-            # (checks _is_sorted_table) and other operations.
-            table_md.load_stats(tx)
+            ensure_table_metadata_loaded(table_md, tx)
             try:
                 yield tx.table_from_metadata(table_md)  # type: ignore[misc]
             except GeneratorExit:

@@ -234,3 +234,37 @@ class TestListRequiresBucket:
         cat = _catalog()
         with pytest.raises(NotImplementedError, match="requires config.bucket"):
             cat._list_namespaces()
+
+
+# ---------------------------------------------------------------------------
+# VastDBTable._schema_path — required by the metadata-cache key
+# ---------------------------------------------------------------------------
+
+
+class TestVastDBTableSchemaPath:
+    def _table(self, *, namespace: tuple[str, ...] = ()):
+        from vast_daft.table import VastDBTable
+
+        cfg = VastDBConfig(endpoint="http://fake:9090", access_key="ak", secret_key="sk")
+        return VastDBTable("docs", None, cfg, bucket="b", schema="s", namespace=namespace)
+
+    def test_root_schema_path(self):
+        assert self._table()._schema_path == "s"
+
+    def test_nested_schema_path(self):
+        assert self._table(namespace=("ns", "child"))._schema_path == "s/ns/child"
+
+    def test_discover_schema_uses_schema_path(self, monkeypatch):
+        import pyarrow as pa
+
+        table = self._table(namespace=("ns",))
+        captured: dict[str, object] = {}
+
+        def fake_cached(key, loader):
+            captured["key"] = key
+            return pa.schema([("id", pa.int64())])
+
+        monkeypatch.setattr("vast_daft.connection.cached_table_schema", fake_cached)
+        result = table._discover_schema()
+        assert captured["key"] == ("http://fake:9090", "ak", "b", "s/ns", "docs")
+        assert result.names == ["id"]

@@ -213,12 +213,14 @@ _DUMMY_CONFIG = VastDBConfig(
 
 def _make_source(**kwargs) -> VastDBDataSource:
     with patch("vast_daft.source._begin_shared_read_txid", return_value=777):
-        return VastDBDataSource(
+        source = VastDBDataSource(
             config=_DUMMY_CONFIG,
             table_name="t",
             table_schema=_TABLE_SCHEMA,
             **kwargs,
         )
+    source._table_type = 1
+    return source
 
 
 def _tasks(source: VastDBDataSource, pushdowns: Pushdowns) -> list[VastDBDataSourceTask]:
